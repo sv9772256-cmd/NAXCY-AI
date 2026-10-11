@@ -51,7 +51,7 @@ st.markdown("""
 
     <div class="logo-container">
         <div class="logo-text">⚡ NAXCY-AI ⚡</div>
-        <div class="logo-subtext">STABLE HIGH-SPEED MULTI-RATIO STUDIO</div>
+        <div class="logo-subtext">STABLE MEMORY-STREAM MULTI-RATIO STUDIO</div>
     </div>
 """, unsafe_allow_html=True)
 
@@ -79,10 +79,7 @@ def process_core_matrix(frame, quality_mode, ratio_mode, source_w, source_h):
     if target_w % 2 != 0: target_w += 1
     if target_h % 2 != 0: target_h += 1
 
-    # Fast interpolation resize
     resized = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
-    
-    # Fast Edge Contrast Sharpener Matrix (Motion blur saaf karne ke liye)
     kernel = np.array([[0,-1,0], [-1,5,-1], [0,-1,0]], dtype=np.float32)
     sharp_frame = cv2.filter2D(resized, -1, kernel)
     
@@ -108,9 +105,9 @@ target_ratio = st.sidebar.selectbox(
     ]
 )
 
-# ==================== CONTROL MODULE 1: VIDEO ENGINE (UNIVERSAL COMPATIBLE CODEC FIXED) ====================
+# ==================== CONTROL MODULE 1: VIDEO ENGINE (MEMORY STREAM DEPLOYMENT FIXED) ====================
 if media_type == "🎥 Video Enhancement Engine":
-    st.subheader("🎥 Pro Video Enhancer System (High-Speed Mode)")
+    st.subheader("🎥 Pro Video Enhancer System (High-Speed Memory Stream Mode)")
     uploaded_video = st.file_uploader("Video load karein...", type=["mp4", "mov", "avi"], key="vid_stream")
 
     if uploaded_video is not None:
@@ -122,10 +119,9 @@ if media_type == "🎥 Video Enhancement Engine":
         st.video(tfile.name)
 
         if st.button("✨ Initialize Video Restoration", key="run_vid"):
-            # MP4 extension layout set safely
             final_output = "naxcy_stable_output.mp4"
 
-            with st.spinner("🚀 AI Core active hai... Video binary frames fast convert ho rahe hain."):
+            with st.spinner("🚀 AI Core active hai... Memory array processing fast convert ho rahi hai."):
                 cap = cv2.VideoCapture(tfile.name)
                 fps = cap.get(cv2.CAP_PROP_FPS)
                 if fps == 0 or not fps: fps = 24.0
@@ -133,25 +129,26 @@ if media_type == "🎥 Video Enhancement Engine":
                 orig_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                 orig_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-                _, testing_frame = cap.read()
-                cap.set(cv2.CAP_PROP_POS_FRAMES, 0) 
+                # Frame container optimization matrix
+                frames_list = []
                 
-                _, dummy_w, dummy_h = process_core_matrix(testing_frame, target_quality, target_ratio, orig_w, orig_h)
-
-                # UNIVERSAL DYNAMIC COMPATIBLE CODEC FALLBACK EMBEDDING (-1)
-                # Yeh browser framework ka standard engine use karega jisse cloud platform par kabhi crash nahi hoga
-                fourcc = -1
-                out = cv2.VideoWriter(final_output, fourcc, fps, (dummy_w, dummy_h))
-
                 while cap.isOpened():
                     ret, frame = cap.read()
                     if not ret: break
 
-                    processed_frame, _, _ = process_core_matrix(frame, target_quality, target_ratio, orig_w, orig_h)
-                    out.write(processed_frame)
+                    processed_frame, dummy_w, dummy_h = process_core_matrix(frame, target_quality, target_ratio, orig_w, orig_h)
+                    frames_list.append(processed_frame)
 
                 cap.release()
-                out.release()
+
+                # MEMORY CONVERSION MATRIX BYPASSING DRIVER LOCKS
+                # Direct frames streaming framework output generation system
+                if len(frames_list) > 0:
+                    fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+                    out = cv2.VideoWriter(final_output, fourcc, fps, (dummy_w, dummy_h))
+                    for f in frames_list:
+                        out.write(f)
+                    out.release()
 
             if os.path.exists(final_output):
                 st.success(f"🎉 Processing complete! Dimensions set to: {dummy_w}x{dummy_h}")
@@ -165,7 +162,7 @@ if media_type == "🎥 Video Enhancement Engine":
                     )
                 if os.path.exists(final_output): os.remove(final_output)
             else:
-                st.error("Error: Processing fail ho gayi. Kripya naye format me try karein.")
+                st.error("Error: Server pipeline configuration match nahi ho rahi hai.")
         os.unlink(tfile.name)
 
 # ==================== CONTROL MODULE 2: IMAGE ENGINE ====================
