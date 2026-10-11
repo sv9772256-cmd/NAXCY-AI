@@ -51,11 +51,11 @@ st.markdown("""
 
     <div class="logo-container">
         <div class="logo-text">⚡ NAXCY-AI ⚡</div>
-        <div class="logo-subtext">STABLE MEMORY-STREAM MULTI-RATIO STUDIO</div>
+        <div class="logo-subtext">STABLE HIGH-FIDELITY 2K / 4K RESTORATION STUDIO</div>
     </div>
 """, unsafe_allow_html=True)
 
-# 3. HIGH SPEED RATIO & INSTANT DE-BLUR RESIZING FILTER
+# 3. ADVANCED 2K/4K CUBIC INTERPOLATION & SHARPNESS ENGINE
 def process_core_matrix(frame, quality_mode, ratio_mode, source_w, source_h):
     if quality_mode == "4K Ultra HD":
         base_h = 2160
@@ -73,15 +73,18 @@ def process_core_matrix(frame, quality_mode, ratio_mode, source_w, source_h):
     elif ratio_mode == "4:5 (Instagram Portrait Post)":
         target_h = base_h; target_w = int(target_h * (4 / 5))
     else:  
-        scale = 2.0 if quality_mode == "4K Ultra HD" else (1.5 if quality_mode == "2K Quad HD" else 1.0)
+        scale = 4.0 if quality_mode == "4K Ultra HD" else (2.0 if quality_mode == "2K Quad HD" else 1.0)
         target_w = int(source_w * scale); target_h = int(source_h * scale)
 
     if target_w % 2 != 0: target_w += 1
     if target_h % 2 != 0: target_h += 1
 
-    resized = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
-    kernel = np.array([[0,-1,0], [-1,5,-1], [0,-1,0]], dtype=np.float32)
-    sharp_frame = cv2.filter2D(resized, -1, kernel)
+    # High-Quality Bicubic Upscaling Layer
+    resized = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_CUBIC)
+    
+    # Advanced Unsharp Masking System (Real HD Textures restore karne ke liye)
+    gaussian_blur = cv2.GaussianBlur(resized, (5, 5), 0)
+    sharp_frame = cv2.addWeighted(resized, 1.7, gaussian_blur, -0.7, 0)
     
     return sharp_frame, target_w, target_h
 
@@ -105,9 +108,9 @@ target_ratio = st.sidebar.selectbox(
     ]
 )
 
-# ==================== CONTROL MODULE 1: VIDEO ENGINE (MEMORY STREAM DEPLOYMENT FIXED) ====================
+# ==================== CONTROL MODULE 1: VIDEO ENGINE ====================
 if media_type == "🎥 Video Enhancement Engine":
-    st.subheader("🎥 Pro Video Enhancer System (High-Speed Memory Stream Mode)")
+    st.subheader("🎥 Pro Video Enhancer System (High-Fidelity Mode)")
     uploaded_video = st.file_uploader("Video load karein...", type=["mp4", "mov", "avi"], key="vid_stream")
 
     if uploaded_video is not None:
@@ -121,7 +124,7 @@ if media_type == "🎥 Video Enhancement Engine":
         if st.button("✨ Initialize Video Restoration", key="run_vid"):
             final_output = "naxcy_stable_output.mp4"
 
-            with st.spinner("🚀 AI Core active hai... Memory array processing fast convert ho rahi hai."):
+            with st.spinner("🚀 AI Core active hai... High-definition textures restore ho rahe hain."):
                 cap = cv2.VideoCapture(tfile.name)
                 fps = cap.get(cv2.CAP_PROP_FPS)
                 if fps == 0 or not fps: fps = 24.0
@@ -129,7 +132,6 @@ if media_type == "🎥 Video Enhancement Engine":
                 orig_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                 orig_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-                # Frame container optimization matrix
                 frames_list = []
                 
                 while cap.isOpened():
@@ -141,8 +143,6 @@ if media_type == "🎥 Video Enhancement Engine":
 
                 cap.release()
 
-                # MEMORY CONVERSION MATRIX BYPASSING DRIVER LOCKS
-                # Direct frames streaming framework output generation system
                 if len(frames_list) > 0:
                     fourcc = cv2.VideoWriter_fourcc(*'MJPG')
                     out = cv2.VideoWriter(final_output, fourcc, fps, (dummy_w, dummy_h))
@@ -162,7 +162,7 @@ if media_type == "🎥 Video Enhancement Engine":
                     )
                 if os.path.exists(final_output): os.remove(final_output)
             else:
-                st.error("Error: Server pipeline configuration match nahi ho rahi hai.")
+                st.error("Error: Server configuration sync nahi ho paayi.")
         os.unlink(tfile.name)
 
 # ==================== CONTROL MODULE 2: IMAGE ENGINE ====================
@@ -178,15 +178,15 @@ else:
         st.image(uploaded_image, width=350)  
 
         if st.button("✨ Initialize Image Restoration", key="run_img"):
-            with st.spinner("🔮 Scaling algorithms active hain... Please wait."):
+            with st.spinner("🔮 Advanced algorithms pixels ko upscale kar rahe hain... Please wait."):
                 h, w, _ = img.shape
                 
                 output_img, final_w, final_h = process_core_matrix(img, target_quality, target_ratio, w, h)
 
-                _, encoded_buffer = cv2.imencode('.jpg', output_img, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+                _, encoded_buffer = cv2.imencode('.jpg', output_img, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
                 byte_data = encoded_buffer.tobytes()
 
-            st.success(f"🎉 Photo successfully transformed! Size: {final_w}x{final_h}")
+            st.success(f"🎉 Photo successfully transformed! Real Size: {final_w}x{final_h}")
             st.image(byte_data, width=350)  
             st.download_button(
                 label="⬇️ Download Restored Sharp Image",
