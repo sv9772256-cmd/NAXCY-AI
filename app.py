@@ -3,7 +3,8 @@ import cv2
 import numpy as np
 import tempfile
 
-st.set_page_config(page_title="NAXCY-AI Video Enhancer", page_icon="🚀", layout="centered")
+st.set_page_config(page_title="NAXCY-AI Video Enhancer", page_icon="🎬", layout="centered")
+
 
 st.title("🚀 NAXCY-AI Video Enhancer")
 st.write("Apni video upload karein aur uski quality ko instant enhance karein!")
