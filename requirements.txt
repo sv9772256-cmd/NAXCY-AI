@@ -1,3 +1,5 @@
 opencv-python-headless
 numpy
 streamlit
+imageio
+imageio-ffmpeg
