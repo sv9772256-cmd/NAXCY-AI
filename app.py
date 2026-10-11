@@ -4,6 +4,7 @@ import numpy as np
 import tempfile
 
 st.set_page_config(page_title="NAXCY-AI Video Enhancer", page_icon="🎬", layout="centered")
+st.write("### 🎬")
 
 
 st.title("🚀 NAXCY-AI Video Enhancer")
