@@ -5,15 +5,14 @@ import tempfile
 import os
 import subprocess
 
-st.set_page_config(page_title="NAXCY-AI Ultimate Enhancer", page_icon="🎬", layout="centered")
+st.set_page_config(page_title="NAXCY-AI Ultimate 4K Enhancer", page_icon="🎬", layout="centered")
 
-# Custom Title & Master App Logo
+# Header Logo
 st.markdown("<h1 style='text-align: center; font-size: 80px;'>🎬</h1>", unsafe_allow_html=True)
-st.title("🚀 NAXCY-AI Multi-Media Ultra Enhancer")
-st.write("Apni Video ya Image ki quality badhayein bina any data loss aur perfect dynamic processing ke sath!")
+st.title("🚀 NAXCY-AI Multi-Media 4K Ultra Enhancer")
+st.write("Apni Video ya Image ko true 4K resolution aur sharp details me instant convert karein!")
 
-# --- MULTI-TAB NAVIGATION SYSTEM ---
-tab1, tab2 = st.tabs(["🎥 Video Enhancer (4K & Audio Fix)", "📸 Image Enhancer (Ultra HD)"])
+tab1, tab2 = st.tabs(["🎥 Video Enhancer (4K & Audio Fix)", "📸 Image Enhancer (True 4K Ultra HD)"])
 
 # ==================== TAB 1: VIDEO ENHANCER ENGINE ====================
 with tab1:
@@ -32,40 +31,31 @@ with tab1:
             temp_output = "temp_enhanced.mp4"
             final_output = "naxcy_perfect_4k.mp4"
             
-            with st.spinner("🚀 AI Processing Engine active hai... Audio aur Ratio restore ho rahe hain."):
+            with st.spinner("🚀 AI Processing Engine active hai... Video 4K format me render ho rahi hai."):
                 cap = cv2.VideoCapture(tfile.name)
-                
                 fps = cap.get(cv2.CAP_PROP_FPS)
-                if fps == 0 or not fps:
-                    fps = 24.0
-                    
-                orig_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                orig_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                if fps == 0 or not fps: fps = 24.0
                 
-                # Dynamic Auto Aspect Ratio Multiplication
-                target_width = orig_width * 4
-                target_height = orig_height * 4
+                # Dynamic 4K Scale
+                target_width = 3840
+                target_height = 2160
                 
                 fourcc = cv2.VideoWriter_fourcc(*'mp4v')
                 out = cv2.VideoWriter(temp_output, fourcc, fps, (target_width, target_height))
                 
                 while cap.isOpened():
                     ret, frame = cap.read()
-                    if not ret:
-                        break
+                    if not ret: break
                     
-                    # Core Processing Layer
                     upscaled_frame = cv2.resize(frame, (target_width, target_height), interpolation=cv2.INTER_CUBIC)
                     denoised = cv2.fastNlMeansDenoisingColored(upscaled_frame, None, 4, 4, 7, 21)
                     kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]], dtype=np.float32)
                     final_frame = cv2.filter2D(denoised, -1, kernel)
-                    
                     out.write(final_frame)
                     
                 cap.release()
                 out.release()
                 
-                # FFMPEG Audio Sync Engine
                 try:
                     cmd = f"ffmpeg -y -i {temp_output} -i {tfile.name} -c:v copy -c:a aac -map 0:v:0 -map 1:a:0? {final_output}"
                     subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -73,24 +63,17 @@ with tab1:
                     os.rename(temp_output, final_output)
                     
             if os.path.exists(final_output):
-                st.success("🎉 Video successfully enhance ho gayi hai!")
-                st.write("### Enhanced Output Video:")
-                
+                st.success("🎉 Video successfully 4K me convert ho gayi!")
+                st.video(final_output)
                 with open(final_output, "rb") as video_file:
-                    video_bytes = video_file.read()
-                    st.video(video_bytes)
-                    st.download_button(label="⬇️ Perfect 4K Video Download Karein", data=video_bytes, file_name="naxcy_perfect_4k.mp4", mime="video/mp4")
-                    
+                    st.download_button(label="⬇️ 4K Video Download Karein", data=video_file.read(), file_name="naxcy_4k_video.mp4", mime="video/mp4")
                 if os.path.exists(temp_output): os.remove(temp_output)
                 if os.path.exists(final_output): os.remove(final_output)
-            else:
-                st.error("Processing me koi dikkat aayi.")
-                
         os.unlink(tfile.name)
 
-# ==================== TAB 2: IMAGE ENHANCER ENGINE ====================
+# ==================== TAB 2: IMAGE ENHANCER ENGINE (TRUE 4K FIXED) ====================
 with tab2:
-    st.header("Image Quality HD Engine")
+    st.header("True 4K Image Ultra Sharpener")
     uploaded_image = st.file_uploader("Photo (Image) select karein...", type=["jpg", "jpeg", "png"], key="img_up")
     
     if uploaded_image is not None:
@@ -100,23 +83,28 @@ with tab2:
         st.write("### Original Image Preview:")
         st.image(uploaded_image, use_container_width=True)
         
-        if st.button("✨ Enhance Image Quality", key="img_btn"):
-            with st.spinner("🔮 AI Pixel Sharpener photo ko clear kar raha hai... Please wait."):
-                h, w, c = img.shape
+        if st.button("✨ Convert Image to True 4K Ultra HD", key="img_btn"):
+            with st.spinner("🔮 AI 4K Resolution Engine pixel structure rebuild kar raha hai... Please wait."):
                 
-                # Image Super Resolution 4x Scale
-                img_resized = cv2.resize(img, (w * 4, h * 4), interpolation=cv2.INTER_CUBIC)
+                # --- TRUE 4K RESOLUTION MATHEMATICAL TARGET (3840 x 2160) ---
+                target_4k_w = 3840
+                target_4k_h = 2160
                 
-                # Image Denoising and Sharpening Filter Matrix
-                img_denoised = cv2.fastNlMeansDenoisingColored(img_resized, None, 6, 6, 7, 21)
-                kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]], dtype=np.float32)
-                img_enhanced = cv2.filter2D(img_denoised, -1, kernel)
+                # 1. Advanced Bicubic Scaling se image ko precise 4K blocks me resize karna
+                img_4k = cv2.resize(img, (target_4k_w, target_4k_h), interpolation=cv2.INTER_CUBIC)
                 
-                # Encoded structure for downlaod format
-                _, encoded_img = cv2.imencode('.png', img_enhanced)
+                # 2. Digital Denoising & Color Correction
+                img_clean = cv2.fastNlMeansDenoisingColored(img_4k, None, 4, 4, 7, 21)
+                
+                # 3. High-Pass Unsharp Masking Matrix (4K Textures ko ultra-clear aur crisp banane ke liye)
+                gaussian_blur = cv2.GaussianBlur(img_clean, (5, 5), 0)
+                img_sharp = cv2.addWeighted(img_clean, 1.6, gaussian_blur, -0.6, 0)
+                
+                # Final structure encoding for PNG download stream
+                _, encoded_img = cv2.imencode('.png', img_sharp)
                 img_bytes = encoded_img.tobytes()
                 
-            st.success("🎉 Photo quality successfully boost ho gayi hai!")
-            st.write("### Enhanced Ultra HD Output Image:")
+            st.success(f"🎉 Photo successfully true 4K Ultra HD ({target_4k_w}x{target_4k_h}) me upscale ho chuki hai!")
+            st.write("### Enhanced 4K Ultra HD Output Image:")
             st.image(img_bytes, use_container_width=True)
-            st.download_button(label="⬇️ Ultra HD Photo Download Karein", data=img_bytes, file_name="naxcy_enhanced_image.png", mime="image/png")
+            st.download_button(label="⬇️ True 4K Ultra HD Photo Download Karein", data=img_bytes, file_name="naxcy_true_4k_image.png", mime="image/png")
