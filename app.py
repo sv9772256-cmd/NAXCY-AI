@@ -47,7 +47,7 @@ st.markdown("""
     </style>
     <div class="logo-container">
         <div class="logo-text">⚡ NAXCY-AI ⚡</div>
-        <div class="logo-subtext">STABLE 2K / 4K AUDIO PRESERVED STUDIO</div>
+        <div class="logo-subtext">SMOOTH STREAMING 2K / 4K MEDIA STUDIO</div>
     </div>
 """, unsafe_allow_html=True)
 
@@ -104,9 +104,9 @@ target_ratio = st.sidebar.selectbox(
     ]
 )
 
-# ==================== VIDEO ENGINE SECTION (AUDIO FIXED) ====================
+# ==================== VIDEO ENGINE SECTION (SMOOTH PLAYBACK) ====================
 if media_type == "🎥 Video Enhancer Mode":
-    st.subheader("🎥 Pro Video Enhancer Studio (Voice & Size Fixed)")
+    st.subheader("🎥 Pro Video Enhancer Studio (Smooth Playback & Sync)")
     uploaded_video = st.file_uploader("Video load karein...", type=["mp4", "mov", "avi"], key="vid_stream")
 
     if uploaded_video is not None:
@@ -121,9 +121,8 @@ if media_type == "🎥 Video Enhancer Mode":
             temp_silent = "temp_silent_output.mp4"
             final_output = "naxcy_perfect_voice_output.mp4"
 
-            with st.spinner("🚀 AI Engine active hai... Quality boost aur voice sync ho rahi hai."):
+            with st.spinner("🚀 AI Engine active hai... Quality compression aur smooth streaming parameters load ho rahe hain."):
                 try:
-                    # Reading original video via imageio
                     reader = imageio.get_reader(tfile.name)
                     meta = reader.get_meta_data()
                     fps = meta.get('fps', 24.0)
@@ -132,13 +131,15 @@ if media_type == "🎥 Video Enhancer Mode":
                     first_frame = reader.get_data(0)
                     _, dummy_w, dummy_h = process_core_matrix(first_frame, target_quality, target_ratio, orig_w, orig_h)
 
-                    # FIXED ARGUMENTS: Removed 'audio_loop' to prevent syntax crash
+                    # CRITICAL OPTIMIZATION: Added tight macro block configuration parameters
+                    # to keep video file bitrates completely uniform for smooth playback on web/mobile browsers
                     writer = imageio.get_writer(
                         temp_silent, 
                         fps=fps, 
                         codec='libx264', 
-                        quality=6, 
-                        macro_block_size=None
+                        quality=7, 
+                        pixelformat='yuv420p', # Ensure universal player color compatibility matrix
+                        macro_block_size=16
                     )
 
                     for frame in reader:
@@ -150,12 +151,12 @@ if media_type == "🎥 Video Enhancer Mode":
                     writer.close()
                     reader.close()
 
-                    # --- ADVANCED FFMEPEG MULTI-STREAM AUDIO SYNCHRONIZATION ---
-                    # Yeh system ke embedded binary framework se original voice extract karke bina data loss ke chipka dega
+                    # --- ADVANCED FFMEPEG FAST MUX LAYER FOR ZERO PLAYBACK LATENCY ---
                     try:
                         import subprocess
                         ffmpeg_bin = imageio.plugins.ffmpeg.get_exe()
-                        cmd = f'"{ffmpeg_bin}" -y -i "{temp_silent}" -i "{tfile.name}" -c:v copy -c:a aac -b:a 192k -map 0:v:0 -map 1:a:0? "{final_output}"'
+                        # Added faststart flag for instant stream initialization
+                        cmd = f'"{ffmpeg_bin}" -y -i "{temp_silent}" -i "{tfile.name}" -c:v copy -c:a aac -b:a 192k -movflags +faststart -map 0:v:0 -map 1:a:0? "{final_output}"'
                         subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     except Exception:
                         if os.path.exists(temp_silent):
