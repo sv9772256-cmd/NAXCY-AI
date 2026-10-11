@@ -3,12 +3,13 @@ import cv2
 import numpy as np
 import tempfile
 import os
+from moviepy.editor import VideoFileClip
 
-# 1. BULLETPROOF PAGE CONFIGURATION (PC & PHONE RESPONSIVE)
+# 1. BULLETPROOF PAGE CONFIGURATION
 st.set_page_config(
     page_title="NAXCY-AI Ultimate Media Studio",
     page_icon="🎬",
-    layout="wide",
+    layout="centered",
     initial_sidebar_state="expanded"
 )
 
@@ -51,14 +52,13 @@ st.markdown("""
 
     <div class="logo-container">
         <div class="logo-text">⚡ NAXCY-AI ⚡</div>
-        <div class="logo-subtext">CRASH-PROOF 2K / 4K ULTRA RESTORATION ENGINE</div>
+        <div class="logo-subtext">AUDIO + SIZE COMPRESSION FULL OPTIMIZED ENGINE</div>
     </div>
 """, unsafe_allow_html=True)
 
-# 3. CRASH-PROOF DYNAMIC MATRIX PROCESSOR
+# 3. ADVANCED RATIO & SHARPNESS PROCESSOR
 def process_core_matrix(frame, quality_mode, ratio_mode, source_w, source_h):
     try:
-        # Determine Base Height target
         if quality_mode == "4K Ultra HD":
             base_h = 2160
         elif quality_mode == "2K Quad HD":
@@ -66,7 +66,6 @@ def process_core_matrix(frame, quality_mode, ratio_mode, source_w, source_h):
         else:  
             base_h = source_h
 
-        # Manual Aspect Ratio Lock Controller Logic
         if ratio_mode == "9:16 (Instagram Reel / Short)":
             target_h = base_h
             target_w = int(target_h * (9 / 16))
@@ -79,28 +78,25 @@ def process_core_matrix(frame, quality_mode, ratio_mode, source_w, source_h):
         elif ratio_mode == "4:5 (Instagram Portrait Post)":
             target_h = base_h
             target_w = int(target_h * (4 / 5))
-        else:  # Keep Original Proportions
+        else:  
             scale = 4.0 if quality_mode == "4K Ultra HD" else (2.0 if quality_mode == "2K Quad HD" else 1.0)
             target_w = int(source_w * scale)
             target_h = int(source_h * scale)
 
-        # H.264 / Web Container Multi-Grid Check (Even block pixels)
         if target_w % 2 != 0: target_w += 1
         if target_h % 2 != 0: target_h += 1
 
-        # High-Fidelity Upscaling Interpolation
         resized = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_CUBIC)
         
-        # Dual-Layer Anti-Blur & Sharpening Algorithm
+        # Motion Blur Cleaning System
         gaussian_blur = cv2.GaussianBlur(resized, (5, 5), 0)
         sharp_frame = cv2.addWeighted(resized, 1.7, gaussian_blur, -0.7, 0)
         
         return sharp_frame, target_w, target_h
-    except Exception as e:
-        # Fallback return matrix to prevent processing loop crash
+    except Exception:
         return frame, source_w, source_h
 
-# 4. CONTROL SIDEBAR CONFIGURATION
+# 4. SIDEBAR CONFIGURATION
 st.sidebar.header("⚙️ Core Engine Settings")
 media_type = st.sidebar.radio("Select Input Source:", ["🎥 Video Enhancer Mode", "📸 Image Enhancer Mode"])
 
@@ -120,9 +116,9 @@ target_ratio = st.sidebar.selectbox(
     ]
 )
 
-# ==================== CONTROLLER SECTION 1: VIDEO Restorer ====================
+# ==================== VIDEO ENGINE SECTION ====================
 if media_type == "🎥 Video Enhancer Mode":
-    st.subheader("🎥 Pro Video Enhancer Studio (Stable Memory Engine)")
+    st.subheader("🎥 Pro Video Enhancer Studio (Voice & Compression Sync)")
     uploaded_video = st.file_uploader("Video load karein...", type=["mp4", "mov", "avi"], key="vid_stream")
 
     if uploaded_video is not None:
@@ -131,12 +127,14 @@ if media_type == "🎥 Video Enhancer Mode":
         tfile.close()
 
         st.write("### Original Video Preview:")
+        st.sidebar.video(tfile.name) # Sidebar mapping preview safely
         st.video(tfile.name)
 
         if st.button("✨ Initialize Video Quality Boost", key="run_vid"):
-            final_output = "naxcy_stable_media.mp4"
+            temp_silent = "temp_silent_enhanced.mp4"
+            final_output = "naxcy_compressed_voice.mp4"
             
-            with st.spinner("🚀 AI Processing Active... Rebuilding resolution arrays safely."):
+            with st.spinner("🚀 AI Core active hai... Video process aur compressed size optimize ho raha hai."):
                 try:
                     cap = cv2.VideoCapture(tfile.name)
                     fps = cap.get(cv2.CAP_PROP_FPS)
@@ -146,42 +144,63 @@ if media_type == "🎥 Video Enhancer Mode":
                     orig_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
                     frames_list = []
-                    
                     while cap.isOpened():
                         ret, frame = cap.read()
                         if not ret: break
                         
                         processed_frame, dummy_w, dummy_h = process_core_matrix(frame, target_quality, target_ratio, orig_w, orig_h)
                         frames_list.append(processed_frame)
-                    
                     cap.release()
 
-                    # Universal stable fallback codec mapping array stream
                     if len(frames_list) > 0:
-                        fourcc = cv2.VideoWriter_fourcc(*'MJPG')
-                        out = cv2.VideoWriter(final_output, fourcc, fps, (dummy_w, dummy_h))
+                        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                        out = cv2.VideoWriter(temp_silent, fourcc, fps, (dummy_w, dummy_h))
                         for f in frames_list:
                             out.write(f)
                         out.release()
 
-                    if os.path.exists(final_output):
-                        st.success(f"🎉 Process completed successfully! Target resolution: {dummy_w}x{dummy_h}")
+                        # --- MOVIEPY AUDIO SYNC & DYNAMIC COMPRESSION ENGINE ---
+                        # Yeh structure original voice extract karega aur compressed bitstream write karega size chota rakhne ke liye
+                        orig_clip = VideoFileClip(tfile.name)
+                        enhanced_clip = VideoFileClip(temp_silent)
                         
+                        if orig_clip.audio is not None:
+                            final_clip = enhanced_clip.set_audio(orig_clip.audio)
+                        else:
+                            final_clip = enhanced_clip
+                            
+                        # libx264 codec aur optimized bitrate size control rakhega
+                        final_clip.write_videofile(
+                            final_output, 
+                            codec="libx264", 
+                            audio_codec="aac",
+                            bitrate="1500k", 
+                            preset="medium",
+                            logger=None
+                        )
+                        
+                        orig_clip.close()
+                        enhanced_clip.close()
+                        final_clip.close()
+
+                    if os.path.exists(final_output):
+                        st.success(f"🎉 Process successfully complete! Size controlled at standard distribution tier.")
+                        st.video(final_output)
                         with open(final_output, "rb") as file_stream:
                             st.download_button(
-                                label="⬇️ Download Enhanced Video Track",
+                                label="⬇️ Download Enhanced Video Track (With Voice)",
                                 data=file_stream.read(),
-                                file_name="naxcy_enhanced_video.mp4",
+                                file_name="naxcy_perfect_enhanced.mp4",
                                 mime="video/mp4"
                             )
+                        if os.path.exists(temp_silent): os.remove(temp_silent)
                         if os.path.exists(final_output): os.remove(final_output)
-                    else:
-                        st.error("Error: Processing block timeout setup failed.")
                 except Exception as master_err:
-                    st.error(f"Engine Warning: Stream format crash prevented safely. Details: {master_err}")
+                    st.error(f"Engine Alert: Framework integration backup handled safely. Details: {master_err}")
+                    if os.path.exists(temp_silent): os.remove(temp_silent)
         os.unlink(tfile.name)
 
-# ==================== CONTROLLER SECTION 2: IMAGE Restorer ====================
+# ==================== IMAGE ENGINE SECTION ====================
 else:
     st.subheader("📸 High-Fidelity Image Restoration Studio")
     uploaded_image = st.file_uploader("Image upload karein...", type=["jpg", "jpeg", "png"], key="img_stream")
@@ -197,13 +216,13 @@ else:
             if st.button("✨ Initialize Image Quality Boost", key="run_img"):
                 with st.spinner("🔮 Processing high-frequency textures details..."):
                     h, w, _ = img.shape
-                    
                     output_img, final_w, final_h = process_core_matrix(img, target_quality, target_ratio, w, h)
 
-                    _, encoded_buffer = cv2.imencode('.jpg', output_img, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+                    # High compression format quality control mapping to retain tight sizing limits
+                    _, encoded_buffer = cv2.imencode('.jpg', output_img, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
                     byte_data = encoded_buffer.tobytes()
 
-                st.success(f"🎉 Photo successfully transformed! Resolution size: {final_w}x{final_h}")
+                st.success(f"🎉 Photo successfully transformed! Matrix Resolution: {final_w}x{final_h}")
                 st.image(byte_data, width=350)  
                 st.download_button(
                     label="⬇️ Download Restored Sharp Image",
@@ -212,4 +231,4 @@ else:
                     mime="image/jpeg"
                 )
         except Exception as img_err:
-            st.error(f"Image Loader Error: File input rejected safely. Details: {img_err}")
+            st.error(f"Image Engine Warning: {img_err}")
