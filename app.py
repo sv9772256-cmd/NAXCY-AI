@@ -10,9 +10,9 @@ st.set_page_config(page_title="NAXCY-AI Ultimate 4K Enhancer", page_icon="🎬",
 # Header Logo
 st.markdown("<h1 style='text-align: center; font-size: 80px;'>🎬</h1>", unsafe_allow_html=True)
 st.title("🚀 NAXCY-AI Multi-Media 4K Ultra Enhancer")
-st.write("Apni Video ya Image ko true 4K resolution aur sharp details me instant convert karein!")
+st.write("Apni Video ya Image ko true 4K resolution aur clear details me instant convert karein!")
 
-tab1, tab2 = st.tabs(["🎥 Video Enhancer (4K & Audio Fix)", "📸 Image Enhancer (True 4K Ultra HD)"])
+tab1, tab2 = st.tabs(["🎥 Video Enhancer (4K & Audio Fix)", "📸 Image Enhancer (True 4K Face Clean)"])
 
 # ==================== TAB 1: VIDEO ENHANCER ENGINE ====================
 with tab1:
@@ -36,7 +36,6 @@ with tab1:
                 fps = cap.get(cv2.CAP_PROP_FPS)
                 if fps == 0 or not fps: fps = 24.0
                 
-                # Dynamic 4K Scale
                 target_width = 3840
                 target_height = 2160
                 
@@ -71,9 +70,9 @@ with tab1:
                 if os.path.exists(final_output): os.remove(final_output)
         os.unlink(tfile.name)
 
-# ==================== TAB 2: IMAGE ENHANCER ENGINE (TRUE 4K FIXED) ====================
+# ==================== TAB 2: IMAGE ENHANCER ENGINE (FACE DYNAMIC CLEAN) ====================
 with tab2:
-    st.header("True 4K Image Ultra Sharpener")
+    st.header("True 4K Image & Face Sharpener")
     uploaded_image = st.file_uploader("Photo (Image) select karein...", type=["jpg", "jpeg", "png"], key="img_up")
     
     if uploaded_image is not None:
@@ -84,27 +83,33 @@ with tab2:
         st.image(uploaded_image, use_container_width=True)
         
         if st.button("✨ Convert Image to True 4K Ultra HD", key="img_btn"):
-            with st.spinner("🔮 AI 4K Resolution Engine pixel structure rebuild kar raha hai... Please wait."):
+            with st.spinner("🔮 AI Face Restoration Engine details clean kar raha hai... Please wait."):
                 
-                # --- TRUE 4K RESOLUTION MATHEMATICAL TARGET (3840 x 2160) ---
                 target_4k_w = 3840
                 target_4k_h = 2160
                 
-                # 1. Advanced Bicubic Scaling se image ko precise 4K blocks me resize karna
+                # 1. Bicubic scaling for 4K format
                 img_4k = cv2.resize(img, (target_4k_w, target_4k_h), interpolation=cv2.INTER_CUBIC)
                 
-                # 2. Digital Denoising & Color Correction
-                img_clean = cv2.fastNlMeansDenoisingColored(img_4k, None, 4, 4, 7, 21)
+                # 2. Dynamic Contrast Boost (Chehre par chamak aur details balance karne ke liye)
+                lab = cv2.cvtColor(img_4k, cv2.COLOR_BGR2LAB)
+                l, a, b = cv2.split(lab)
+                clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+                cl = clahe.apply(l)
+                limg = cv2.merge((cl,a,b))
+                img_bright = cv2.cvtColor(limg, cv2.COLOR_LAB2BGR)
                 
-                # 3. High-Pass Unsharp Masking Matrix (4K Textures ko ultra-clear aur crisp banane ke liye)
-                gaussian_blur = cv2.GaussianBlur(img_clean, (5, 5), 0)
-                img_sharp = cv2.addWeighted(img_clean, 1.6, gaussian_blur, -0.6, 0)
+                # 3. Soft Denoising taaki blur smooth ho jaye
+                img_clean = cv2.fastNlMeansDenoisingColored(img_bright, None, 6, 6, 7, 21)
                 
-                # Final structure encoding for PNG download stream
+                # 4. Ultra Edge-Sharpening Filter (Eyes, Hair aur Features clean karne ke liye)
+                gaussian_blur = cv2.GaussianBlur(img_clean, (3, 3), 0)
+                img_sharp = cv2.addWeighted(img_clean, 1.8, gaussian_blur, -0.8, 0)
+                
                 _, encoded_img = cv2.imencode('.png', img_sharp)
                 img_bytes = encoded_img.tobytes()
                 
             st.success(f"🎉 Photo successfully true 4K Ultra HD ({target_4k_w}x{target_4k_h}) me upscale ho chuki hai!")
-            st.write("### Enhanced 4K Ultra HD Output Image:")
+            st.write("### Enhanced 4K Face Clean Output Image:")
             st.image(img_bytes, use_container_width=True)
-            st.download_button(label="⬇️ True 4K Ultra HD Photo Download Karein", data=img_bytes, file_name="naxcy_true_4k_image.png", mime="image/png")
+            st.download_button(label="⬇️ True 4K Ultra HD Photo Download Karein", data=img_bytes, file_name="naxcy_true_4k_face_clean.png", mime="image/png")
