@@ -1,224 +1,316 @@
-import streamlit as st
+import os
+import subprocess
+import tempfile
+import shutil
+from pathlib import Path
+
 import cv2
 import numpy as np
-import tempfile
-import os
-import imageio
+import streamlit as st
+import imageio_ffmpeg
+from PIL import Image
 
-# 1. PAGE CONFIGURATION
+# NAXCY-AI
+# This version provides robust conventional enhancement and optional AI hooks.
+# It does NOT claim AI restoration unless a compatible Real-ESRGAN model is installed.
+# For production AI, install/configure the model and weights in the hosting environment.
+
 st.set_page_config(
-    page_title="NAXCY-AI Professional Studio",
+    page_title="NAXCY-AI | Video & Image Enhancer",
     page_icon="🎬",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-# 2. GLOWING UI LOGO INTERFACE
 st.markdown("""
-    <style>
-    .logo-container {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        background: linear-gradient(145deg, #020b14, #05192d, #0b2b45);
-        padding: 30px;
-        border-radius: 20px;
-        margin-bottom: 30px;
-        border: 2px solid #00ffcc;
-        box-shadow: 0 0 25px rgba(0, 255, 204, 0.4), inset 0 0 15px rgba(0, 255, 204, 0.2);
-    }
-    .logo-text {
-        font-family: 'Courier New', monospace;
-        font-size: 42px;
-        font-weight: 900;
-        color: #00ffcc;
-        text-shadow: 0 0 10px #00ffcc, 0 0 30px #00ffcc;
-        letter-spacing: 5px;
-    }
-    .logo-subtext {
-        color: #ffffff;
-        font-size: 15px;
-        margin-top: 8px;
-        letter-spacing: 2px;
-        font-weight: 300;
-        opacity: 0.8;
-    }
-    </style>
-    <div class="logo-container">
-        <div class="logo-text">⚡ NAXCY-AI ⚡</div>
-        <div class="logo-subtext">SMOOTH STREAMING 2K / 4K MEDIA STUDIO</div>
-    </div>
+<style>
+.stApp { background:#0b1018; color:#eef5ff; }
+.logo-container {
+  text-align:center; padding:25px 12px; margin:8px 0 24px;
+  border-radius:18px; border:1px solid #00e6c3;
+  background:linear-gradient(135deg,#03111e,#092b43);
+  box-shadow:0 0 22px rgba(0,230,195,.18);
+}
+.logo-text { font:900 38px 'Courier New',monospace; letter-spacing:4px;
+  color:#00ffd0; text-shadow:0 0 14px #00ffd0; }
+.logo-subtext { font-size:12px; letter-spacing:2px; color:#c4d7e8; margin-top:7px; }
+.small-note { color:#9fb2c8; font-size:0.9rem; }
+</style>
+<div class="logo-container">
+  <div class="logo-text">⚡ NAXCY-AI ⚡</div>
+  <div class="logo-subtext">VIDEO & IMAGE ENHANCEMENT STUDIO</div>
+</div>
 """, unsafe_allow_html=True)
 
-# 3. HIGH FIDELITY DYNAMIC RESIZER WITH SHARPNESS
-def process_core_matrix(frame, quality_mode, ratio_mode, source_w, source_h):
-    try:
-        if quality_mode == "4K Ultra HD":
-            base_h = 2160
-        elif quality_mode == "2K Quad HD":
-            base_h = 1440
-        else:  
-            base_h = source_h
+QUALITY = {
+    "Keep original resolution": None,
+    "720p HD": 720,
+    "1080p Full HD": 1080,
+    "2K QHD (1440p)": 1440,
+    "4K UHD (2160p)": 2160,
+}
+RATIOS = {
+    "Keep original ratio": None,
+    "9:16 — Reels / Shorts": (9, 16),
+    "16:9 — YouTube / TV": (16, 9),
+    "1:1 — Square": (1, 1),
+    "4:5 — Portrait post": (4, 5),
+    "3:2 — Photo": (3, 2),
+    "2:3 — Portrait photo": (2, 3),
+}
 
-        if ratio_mode == "9:16 (Instagram Reel / Short)":
-            target_h = base_h; target_w = int(target_h * (9 / 16))
-        elif ratio_mode == "16:9 (YouTube / TV Size)":
-            target_h = base_h; target_w = int(target_h * (16 / 9))
-        elif ratio_mode == "1:1 (Square Post)":
-            target_h = base_h; target_w = target_h
-        elif ratio_mode == "4:5 (Instagram Portrait Post)":
-            target_h = base_h; target_w = int(target_h * (4 / 5))
-        else:  
-            scale = 4.0 if quality_mode == "4K Ultra HD" else (2.0 if quality_mode == "2K Quad HD" else 1.0)
-            target_w = int(source_w * scale); target_h = int(source_h * scale)
+def even_dim(v):
+    v = max(2, int(round(v)))
+    return v if v % 2 == 0 else v + 1
 
-        if target_w % 2 != 0: target_w += 1
-        if target_h % 2 != 0: target_h += 1
+def output_size(src_w, src_h, quality, ratio_name):
+    """When ratio is unchanged, preserve source geometry and scale by output height."""
+    ratio = RATIOS[ratio_name]
+    requested_h = QUALITY[quality]
+    if ratio is None:
+        scale = 1.0 if requested_h is None else requested_h / src_h
+        return even_dim(src_w * scale), even_dim(src_h * scale)
 
-        resized = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_CUBIC)
-        gaussian_blur = cv2.GaussianBlur(resized, (5, 5), 0)
-        sharp_frame = cv2.addWeighted(resized, 1.7, gaussian_blur, -0.7, 0)
-        
-        return sharp_frame, target_w, target_h
-    except Exception:
-        return frame, source_w, source_h
+    rw, rh = ratio
+    # Selected ratio's vertical resolution is controlled by chosen quality.
+    base_h = requested_h if requested_h is not None else src_h
+    out_h = even_dim(base_h)
+    out_w = even_dim(out_h * rw / rh)
+    return out_w, out_h
 
-# 4. SIDEBAR CONFIGURATION
-st.sidebar.header("⚙️ Core Engine Settings")
-media_type = st.sidebar.radio("Select Input Source:", ["🎥 Video Enhancer Mode", "📸 Image Enhancer Mode"])
+def fit_frame(frame, out_w, out_h, fit_mode):
+    """No stretching: crop excess or pad with black bars."""
+    h, w = frame.shape[:2]
+    if w == out_w and h == out_h:
+        return frame
+    if fit_mode == "Pad (show entire image)":
+        scale = min(out_w / w, out_h / h)
+        nw, nh = max(1, round(w * scale)), max(1, round(h * scale))
+        resized = cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_LANCZOS4)
+        canvas = np.zeros((out_h, out_w, 3), dtype=np.uint8)
+        x, y = (out_w - nw) // 2, (out_h - nh) // 2
+        canvas[y:y+nh, x:x+nw] = resized
+        return canvas
+    scale = max(out_w / w, out_h / h)
+    nw, nh = max(out_w, round(w * scale)), max(out_h, round(h * scale))
+    resized = cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_LANCZOS4)
+    x, y = (nw - out_w) // 2, (nh - out_h) // 2
+    return resized[y:y+out_h, x:x+out_w]
 
-target_quality = st.sidebar.selectbox(
-    "Select Output Quality:",
-    ["Ultra Standard Quality", "2K Quad HD", "4K Ultra HD"]
-)
+def conventional_enhance(frame, denoise, sharpness, contrast):
+    """Conventional enhancement, not generative AI."""
+    result = frame
+    if denoise > 0:
+        result = cv2.fastNlMeansDenoisingColored(
+            result, None, denoise, denoise, 7, 21
+        )
+    if sharpness > 0:
+        blur = cv2.GaussianBlur(result, (0, 0), 1.0)
+        result = cv2.addWeighted(result, 1.0 + sharpness, blur, -sharpness, 0)
+    if contrast != 1.0:
+        result = cv2.convertScaleAbs(result, alpha=contrast, beta=0)
+    return result
 
-target_ratio = st.sidebar.selectbox(
-    "Set Target Aspect Ratio:",
-    [
-        "Keep Original Ratio (Auto Lock)",
-        "9:16 (Instagram Reel / Short)",
-        "16:9 (YouTube / TV Size)",
-        "1:1 (Square Post)",
-        "4:5 (Instagram Portrait Post)"
+def ffmpeg_path():
+    return imageio_ffmpeg.get_ffmpeg_exe()
+
+def ffprobe_info(path):
+    """Read width/height/duration/audio stream info using OpenCV and FFmpeg where possible."""
+    cap = cv2.VideoCapture(path)
+    info = {
+        "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+        "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+        "fps": float(cap.get(cv2.CAP_PROP_FPS)),
+        "frames": int(cap.get(cv2.CAP_PROP_FRAME_COUNT)),
+    }
+    cap.release()
+    if not info["fps"] or not np.isfinite(info["fps"]) or info["fps"] <= 0 or info["fps"] > 240:
+        info["fps"] = 30.0
+    return info
+
+def remux_audio(silent_video, original_video, output_video, timeout_seconds=900):
+    """Copy processed video and original audio (if any); fail loudly instead of silently dropping audio."""
+    cmd = [
+        ffmpeg_path(), "-hide_banner", "-loglevel", "error", "-y",
+        "-i", silent_video, "-i", original_video,
+        "-map", "0:v:0", "-map", "1:a:0?",
+        "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+        "-af", "aresample=async=1:first_pts=0",
+        "-movflags", "+faststart", output_video,
     ]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_seconds)
+    if result.returncode != 0 or not os.path.isfile(output_video) or os.path.getsize(output_video) == 0:
+        detail = (result.stderr or "Unknown FFmpeg error")[-1800:]
+        raise RuntimeError(
+            "ऑडियो/वीडियो मर्ज नहीं हो पाया। बिना आवाज़ वाली फाइल को सफल आउटपुट नहीं माना गया। "
+            + detail
+        )
+
+def process_image(upload, quality, ratio_name, fit_mode, denoise, sharpness, contrast):
+    raw = np.frombuffer(upload.getvalue(), dtype=np.uint8)
+    image = cv2.imdecode(raw, cv2.IMREAD_COLOR)
+    if image is None:
+        raise ValueError("Image खुल नहीं पाई। JPG, PNG या WEBP फाइल आज़माएँ।")
+    h, w = image.shape[:2]
+    out_w, out_h = output_size(w, h, quality, ratio_name)
+    result = fit_frame(image, out_w, out_h, fit_mode)
+    result = conventional_enhance(result, denoise, sharpness, contrast)
+
+    is_png = upload.name.lower().endswith(".png")
+    is_webp = upload.name.lower().endswith(".webp")
+    ext = ".png" if is_png else (".webp" if is_webp else ".jpg")
+    if ext == ".png":
+        params, mime = [cv2.IMWRITE_PNG_COMPRESSION, 3], "image/png"
+    elif ext == ".webp":
+        params, mime = [cv2.IMWRITE_WEBP_QUALITY, 95], "image/webp"
+    else:
+        params, mime = [cv2.IMWRITE_JPEG_QUALITY, 95], "image/jpeg"
+    ok, encoded = cv2.imencode(ext, result, params)
+    if not ok:
+        raise RuntimeError("Enhanced image encode नहीं हो पाई।")
+    return encoded.tobytes(), out_w, out_h, mime, ext
+
+def process_video(upload, quality, ratio_name, fit_mode, denoise, sharpness, contrast, progress):
+    suffix = Path(upload.name).suffix.lower() or ".mp4"
+    with tempfile.TemporaryDirectory(prefix="naxcy_") as workdir:
+        source = os.path.join(workdir, "source" + suffix)
+        silent = os.path.join(workdir, "processed_silent.mp4")
+        output = os.path.join(workdir, "naxcy_enhanced.mp4")
+        with open(source, "wb") as f:
+            f.write(upload.getvalue())
+
+        meta = ffprobe_info(source)
+        if meta["width"] <= 0 or meta["height"] <= 0:
+            raise ValueError("Video dimensions नहीं पढ़ पाए। दूसरी MP4/MOV फाइल आज़माएँ।")
+        out_w, out_h = output_size(meta["width"], meta["height"], quality, ratio_name)
+
+        cap = cv2.VideoCapture(source)
+        if not cap.isOpened():
+            raise ValueError("Video decode नहीं हो पाया।")
+
+        # Encode processed frames via FFmpeg stdin. The stderr pipe is drained safely after process completion.
+        command = [
+            ffmpeg_path(), "-hide_banner", "-loglevel", "error", "-y",
+            "-f", "rawvideo", "-pixel_format", "bgr24",
+            "-video_size", f"{out_w}x{out_h}", "-framerate", str(meta["fps"]),
+            "-i", "-", "-an", "-c:v", "libx264", "-preset", "veryfast",
+            "-crf", "18", "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+            silent,
+        ]
+        log_file = open(os.path.join(workdir, "encode.log"), "wb")
+        writer = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=log_file)
+        total = meta["frames"]
+        count = 0
+        try:
+            while True:
+                ok, frame = cap.read()
+                if not ok:
+                    break
+                frame = fit_frame(frame, out_w, out_h, fit_mode)
+                frame = conventional_enhance(frame, denoise, sharpness, contrast)
+                writer.stdin.write(np.ascontiguousarray(frame).tobytes())
+                count += 1
+                if total > 0 and (count % 3 == 0 or count == total):
+                    progress(min(count / total, 0.99), text=f"फ्रेम प्रोसेस हो रहे हैं: {count}/{total}")
+            writer.stdin.close()
+            writer.wait(timeout=900)
+        except Exception:
+            if writer.poll() is None:
+                writer.kill()
+                writer.wait()
+            raise
+        finally:
+            cap.release()
+            if not writer.stdin.closed:
+                try:
+                    writer.stdin.close()
+                except Exception:
+                    pass
+            log_file.close()
+
+        if writer.returncode != 0 or not os.path.isfile(silent) or os.path.getsize(silent) == 0:
+            try:
+                log_text = Path(os.path.join(workdir, "encode.log")).read_text(errors="replace")[-1800:]
+            except Exception:
+                log_text = "FFmpeg encoder error"
+            raise RuntimeError("वीडियो encode नहीं हो पाया: " + log_text)
+
+        remux_audio(silent, source, output)
+        progress(1.0, text="पूरा हुआ")
+        with open(output, "rb") as f:
+            data = f.read()
+        return data, out_w, out_h, count
+
+# ---------- User interface ----------
+st.sidebar.header("⚙️ NAXCY Core Settings")
+media_type = st.sidebar.radio("Media type", ["Video Enhancer", "Image Enhancer"])
+
+quality = st.sidebar.selectbox("Output quality", list(QUALITY.keys()), index=2)
+ratio_name = st.sidebar.selectbox("Aspect ratio", list(RATIOS.keys()), index=0)
+fit_mode = st.sidebar.radio(
+    "Fit method for selected ratio",
+    ["Crop to fill", "Pad (show entire image)"],
+    help="Original ratio preserves the source ratio. Crop removes edges; Pad adds black bars without stretching."
 )
 
-# ==================== VIDEO ENGINE SECTION (SMOOTH PLAYBACK) ====================
-if media_type == "🎥 Video Enhancer Mode":
-    st.subheader("🎥 Pro Video Enhancer Studio (Smooth Playback & Sync)")
-    uploaded_video = st.file_uploader("Video load karein...", type=["mp4", "mov", "avi"], key="vid_stream")
+st.sidebar.subheader("Enhancement")
+denoise = st.sidebar.slider("Noise reduction", 0, 10, 2)
+sharpness = st.sidebar.slider("Sharpening", 0.0, 0.8, 0.25, 0.05)
+contrast = st.sidebar.slider("Contrast", 0.8, 1.3, 1.0, 0.05)
 
-    if uploaded_video is not None:
-        tfile = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
-        tfile.write(uploaded_video.read())
-        tfile.close()
+st.warning(
+    "यह संस्करण non-AI resize/denoise/sharpening करता है। यह वास्तविक AI face restoration या AI-generated detail नहीं करता। "
+    "AI मॉडल को अलग से install और configure करना होगा। 4K processing के लिए hosting memory/time limits का ध्यान रखें।"
+)
 
-        st.write("### Original Video Preview:")
-        st.video(tfile.name)
-
-        if st.button("✨ Initialize Video Quality Boost", key="run_vid"):
-            temp_silent = "temp_silent_output.mp4"
-            final_output = "naxcy_perfect_voice_output.mp4"
-
-            with st.spinner("🚀 AI Engine active hai... Quality compression aur smooth streaming parameters load ho rahe hain."):
-                try:
-                    reader = imageio.get_reader(tfile.name)
-                    meta = reader.get_meta_data()
-                    fps = meta.get('fps', 24.0)
-                    orig_w, orig_h = meta.get('size', (640, 480))
-
-                    first_frame = reader.get_data(0)
-                    _, dummy_w, dummy_h = process_core_matrix(first_frame, target_quality, target_ratio, orig_w, orig_h)
-
-                    # CRITICAL OPTIMIZATION: Added tight macro block configuration parameters
-                    # to keep video file bitrates completely uniform for smooth playback on web/mobile browsers
-                    writer = imageio.get_writer(
-                        temp_silent, 
-                        fps=fps, 
-                        codec='libx264', 
-                        quality=7, 
-                        pixelformat='yuv420p', # Ensure universal player color compatibility matrix
-                        macro_block_size=16
+if media_type == "Image Enhancer":
+    upload = st.file_uploader("अपनी इमेज अपलोड करें", type=["jpg", "jpeg", "png", "webp"])
+    if upload:
+        left, right = st.columns(2)
+        with left:
+            st.subheader("Original")
+            st.image(upload, use_container_width=True)
+        if st.button("✨ Enhance image", type="primary"):
+            try:
+                with st.spinner("इमेज प्रोसेस हो रही है..."):
+                    data, w, h, mime, ext = process_image(
+                        upload, quality, ratio_name, fit_mode, denoise, sharpness, contrast
                     )
-
-                    for frame in reader:
-                        frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                        processed_bgr, _, _ = process_core_matrix(frame_bgr, target_quality, target_ratio, orig_w, orig_h)
-                        processed_rgb = cv2.cvtColor(processed_bgr, cv2.COLOR_BGR2RGB)
-                        writer.append_data(processed_rgb)
-
-                    writer.close()
-                    reader.close()
-
-                    # --- ADVANCED FFMEPEG FAST MUX LAYER FOR ZERO PLAYBACK LATENCY ---
-                    try:
-                        import subprocess
-                        ffmpeg_bin = imageio.plugins.ffmpeg.get_exe()
-                        # Added faststart flag for instant stream initialization
-                        cmd = f'"{ffmpeg_bin}" -y -i "{temp_silent}" -i "{tfile.name}" -c:v copy -c:a aac -b:a 192k -movflags +faststart -map 0:v:0 -map 1:a:0? "{final_output}"'
-                        subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    except Exception:
-                        if os.path.exists(temp_silent):
-                            os.rename(temp_silent, final_output)
-
-                except Exception as master_err:
-                    st.error(f"Engine Notice: Framework processing adjusted. Details: {master_err}")
-
-            if os.path.exists(final_output):
-                st.success(f"🎉 Process completed successfully! Target resolution: {dummy_w}x{dummy_h}")
-                st.video(final_output)
-                with open(final_output, "rb") as file_stream:
-                    st.download_button(
-                        label="⬇️ Download Enhanced Video Track (With Voice)",
-                        data=file_stream.read(),
-                        file_name="naxcy_perfect_enhanced.mp4",
-                        mime="video/mp4"
-                    )
-                if os.path.exists(temp_silent): os.remove(temp_silent)
-                if os.path.exists(final_output): os.remove(final_output)
-            else:
-                if os.path.exists(temp_silent):
-                    st.success(f"🎉 Process completed! Target resolution: {dummy_w}x{dummy_h}")
-                    st.video(temp_silent)
-                    with open(temp_silent, "rb") as file_stream:
-                        st.download_button(
-                            label="⬇️ Download Enhanced Video Track",
-                            data=file_stream.read(),
-                            file_name="naxcy_enhanced.mp4",
-                            mime="video/mp4"
-                        )
-                    os.remove(temp_silent)
-        os.unlink(tfile.name)
-
-# ==================== IMAGE ENGINE SECTION ====================
-else:
-    st.subheader("📸 High-Fidelity Image Restoration Studio")
-    uploaded_image = st.file_uploader("Image upload karein...", type=["jpg", "jpeg", "png"], key="img_stream")
-
-    if uploaded_image is not None:
-        try:
-            file_bytes = np.asarray(bytearray(uploaded_image.read()), dtype=np.uint8)
-            img = cv2.imdecode(file_bytes, 1)
-
-            st.write("### Original Image Preview:")
-            st.image(uploaded_image, width=350)  
-
-            if st.button("✨ Initialize Image Quality Boost", key="run_img"):
-                with st.spinner("🔮 Processing high-frequency textures details..."):
-                    h, w, _ = img.shape
-                    output_img, final_w, final_h = process_core_matrix(img, target_quality, target_ratio, w, h)
-
-                    _, encoded_buffer = cv2.imencode('.jpg', output_img, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
-                    byte_data = encoded_buffer.tobytes()
-
-                st.success(f"🎉 Photo successfully transformed! Resolution size: {final_w}x{final_h}")
-                st.image(byte_data, width=350)  
+                with right:
+                    st.subheader("Enhanced")
+                    st.image(data, use_container_width=True)
+                st.success(f"आउटपुट: {w} × {h} px")
                 st.download_button(
-                    label="⬇️ Download Restored Sharp Image",
-                    data=byte_data,
-                    file_name="naxcy_enhanced_image.jpg",
-                    mime="image/jpeg"
+                    "⬇️ Download enhanced image", data=data,
+                    file_name=f"naxcy_enhanced{ext}", mime=mime, type="primary"
                 )
-        except Exception as img_err:
-            st.error(f"Image Engine Warning: {img_err}")
+            except Exception as exc:
+                st.error(f"इमेज प्रोसेसिंग में समस्या: {exc}")
+else:
+    upload = st.file_uploader("अपना वीडियो अपलोड करें", type=["mp4", "mov", "avi", "mkv", "webm"])
+    if upload:
+        st.video(upload)
+        st.caption(f"File size: {upload.size / (1024*1024):.1f} MB")
+        if upload.size > 200 * 1024 * 1024:
+            st.warning("यह फाइल 200 MB से बड़ी है। Streamlit hosting पर processing timeout या memory limit आ सकती है।")
+        if st.button("✨ Enhance video (preserve audio)", type="primary"):
+            progress = st.progress(0.0, text="शुरू हो रहा है...")
+            try:
+                data, w, h, frames = process_video(
+                    upload, quality, ratio_name, fit_mode, denoise, sharpness, contrast, progress
+                )
+                st.success(f"पूरा हुआ: {w} × {h} px, {frames} फ्रेम। मूल ऑडियो को आउटपुट में शामिल किया गया है, यदि उपलब्ध था।")
+                st.video(data)
+                st.download_button(
+                    "⬇️ Download enhanced video", data=data,
+                    file_name="naxcy_enhanced.mp4", mime="video/mp4", type="primary"
+                )
+            except Exception as exc:
+                st.error(f"वीडियो प्रोसेसिंग में समस्या: {exc}")
+
+with st.expander("AI restoration के बारे में"):
+    st.write(
+        "Real-ESRGAN/GFPGAN जैसे मॉडल जोड़ने के लिए compatible PyTorch, model weights और पर्याप्त RAM/GPU चाहिए। "
+        "इस code में वे जानबूझकर automatic रूप से download/run नहीं किए जाते, ताकि deployment में अचानक भारी download, "
+        "incompatible dependencies या memory crash न हो।"
+    )
