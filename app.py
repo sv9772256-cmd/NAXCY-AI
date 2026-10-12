@@ -2,6 +2,7 @@ import os
 import subprocess
 import tempfile
 import shutil
+import urllib.request
 from pathlib import Path
 
 import cv2
@@ -97,6 +98,69 @@ def fit_frame(frame, out_w, out_h, fit_mode):
     x, y = (nw - out_w) // 2, (nh - out_h) // 2
     return resized[y:y+out_h, x:x+out_w]
 
+# Optional AI model setup. AI dependencies are installed via requirements-ai.txt.
+MODEL_DIR = Path("models")
+MODEL_DIR.mkdir(exist_ok=True)
+REALESRGAN_URL = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/RealESRGAN_x4plus.pth"
+GFPGAN_URL = "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.3.pth"
+
+def download_model(url, path):
+    if path.exists() and path.stat().st_size > 1_000_000:
+        return
+    request = urllib.request.Request(url, headers={"User-Agent": "NAXCY-AI"})
+    with urllib.request.urlopen(request, timeout=90) as response, open(path, "wb") as target:
+        while True:
+            chunk = response.read(1024 * 1024)
+            if not chunk:
+                break
+            target.write(chunk)
+    if path.stat().st_size <= 1_000_000:
+        path.unlink(missing_ok=True)
+        raise RuntimeError("AI model download अधूरा है। फिर कोशिश करें।")
+
+@st.cache_resource(show_spinner=False)
+def load_realesrgan():
+    try:
+        import torch
+        from basicsr.archs.rrdbnet_arch import RRDBNet
+        from realesrgan import RealESRGANer
+    except Exception as exc:
+        raise RuntimeError(
+            "Real-ESRGAN dependencies उपलब्ध नहीं हैं या आपस में compatible नहीं हैं। "
+            "पहले requirements-ai.txt की dependencies install करके app redeploy करें। Details: " + str(exc)
+        ) from exc
+    weights = MODEL_DIR / "RealESRGAN_x4plus.pth"
+    download_model(REALESRGAN_URL, weights)
+    network = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=4)
+    return RealESRGANer(
+        scale=4, model_path=str(weights), model=network, tile=256, tile_pad=10,
+        pre_pad=0, half=bool(torch.cuda.is_available())
+    )
+
+@st.cache_resource(show_spinner=False)
+def load_gfpgan():
+    try:
+        from gfpgan import GFPGANer
+    except Exception as exc:
+        raise RuntimeError(
+            "GFPGAN dependencies उपलब्ध नहीं हैं या compatible नहीं हैं। requirements-ai.txt देखें। Details: " + str(exc)
+        ) from exc
+    weights = MODEL_DIR / "GFPGANv1.3.pth"
+    download_model(GFPGAN_URL, weights)
+    return GFPGANer(model_path=str(weights), upscale=2, arch="clean", channel_multiplier=2, bg_upsampler=None)
+
+def ai_enhance(frame, face_restore, denoise, sharpness, contrast):
+    """Run neural upscaling; optional face restoration. Input/output are OpenCV BGR frames."""
+    upsampler = load_realesrgan()
+    result, _ = upsampler.enhance(frame, outscale=4)
+    if face_restore:
+        restorer = load_gfpgan()
+        _, _, restored = restorer.enhance(result, has_aligned=False, only_center_face=False, paste_back=True)
+        if restored is not None:
+            result = restored
+    result = conventional_enhance(result, denoise, sharpness, contrast)
+    return result
+
 def conventional_enhance(frame, denoise, sharpness, contrast):
     """Conventional enhancement, not generative AI."""
     result = frame
@@ -146,15 +210,17 @@ def remux_audio(silent_video, original_video, output_video, timeout_seconds=900)
             + detail
         )
 
-def process_image(upload, quality, ratio_name, fit_mode, denoise, sharpness, contrast):
+def process_image(upload, quality, ratio_name, fit_mode, engine, face_restore, denoise, sharpness, contrast):
     raw = np.frombuffer(upload.getvalue(), dtype=np.uint8)
     image = cv2.imdecode(raw, cv2.IMREAD_COLOR)
     if image is None:
         raise ValueError("Image खुल नहीं पाई। JPG, PNG या WEBP फाइल आज़माएँ।")
-    h, w = image.shape[:2]
-    out_w, out_h = output_size(w, h, quality, ratio_name)
-    result = fit_frame(image, out_w, out_h, fit_mode)
-    result = conventional_enhance(result, denoise, sharpness, contrast)
+    if engine == "Real-ESRGAN AI":
+        result = ai_enhance(image, face_restore, denoise, sharpness, contrast)
+    else:
+        result = conventional_enhance(image, denoise, sharpness, contrast)
+    out_w, out_h = output_size(result.shape[1], result.shape[0], quality, ratio_name)
+    result = fit_frame(result, out_w, out_h, fit_mode)
 
     is_png = upload.name.lower().endswith(".png")
     is_webp = upload.name.lower().endswith(".webp")
@@ -170,7 +236,7 @@ def process_image(upload, quality, ratio_name, fit_mode, denoise, sharpness, con
         raise RuntimeError("Enhanced image encode नहीं हो पाई।")
     return encoded.tobytes(), out_w, out_h, mime, ext
 
-def process_video(upload, quality, ratio_name, fit_mode, denoise, sharpness, contrast, progress):
+def process_video(upload, quality, ratio_name, fit_mode, engine, face_restore, denoise, sharpness, contrast, progress):
     suffix = Path(upload.name).suffix.lower() or ".mp4"
     with tempfile.TemporaryDirectory(prefix="naxcy_") as workdir:
         source = os.path.join(workdir, "source" + suffix)
@@ -182,11 +248,19 @@ def process_video(upload, quality, ratio_name, fit_mode, denoise, sharpness, con
         meta = ffprobe_info(source)
         if meta["width"] <= 0 or meta["height"] <= 0:
             raise ValueError("Video dimensions नहीं पढ़ पाए। दूसरी MP4/MOV फाइल आज़माएँ।")
-        out_w, out_h = output_size(meta["width"], meta["height"], quality, ratio_name)
-
         cap = cv2.VideoCapture(source)
         if not cap.isOpened():
             raise ValueError("Video decode नहीं हो पाया।")
+        ok, first_frame = cap.read()
+        if not ok:
+            cap.release()
+            raise ValueError("Video में पढ़ने योग्य frame नहीं मिला।")
+        if engine == "Real-ESRGAN AI":
+            first_frame = ai_enhance(first_frame, face_restore, denoise, sharpness, contrast)
+        else:
+            first_frame = conventional_enhance(first_frame, denoise, sharpness, contrast)
+        out_w, out_h = output_size(first_frame.shape[1], first_frame.shape[0], quality, ratio_name)
+        first_frame = fit_frame(first_frame, out_w, out_h, fit_mode)
 
         # Encode processed frames via FFmpeg stdin. The stderr pipe is drained safely after process completion.
         command = [
@@ -202,12 +276,17 @@ def process_video(upload, quality, ratio_name, fit_mode, denoise, sharpness, con
         total = meta["frames"]
         count = 0
         try:
+            writer.stdin.write(np.ascontiguousarray(first_frame).tobytes())
+            count = 1
             while True:
                 ok, frame = cap.read()
                 if not ok:
                     break
+                if engine == "Real-ESRGAN AI":
+                    frame = ai_enhance(frame, face_restore, denoise, sharpness, contrast)
+                else:
+                    frame = conventional_enhance(frame, denoise, sharpness, contrast)
                 frame = fit_frame(frame, out_w, out_h, fit_mode)
-                frame = conventional_enhance(frame, denoise, sharpness, contrast)
                 writer.stdin.write(np.ascontiguousarray(frame).tobytes())
                 count += 1
                 if total > 0 and (count % 3 == 0 or count == total):
@@ -257,10 +336,16 @@ st.sidebar.subheader("Enhancement")
 denoise = st.sidebar.slider("Noise reduction", 0, 10, 2)
 sharpness = st.sidebar.slider("Sharpening", 0.0, 0.8, 0.25, 0.05)
 contrast = st.sidebar.slider("Contrast", 0.8, 1.3, 1.0, 0.05)
+engine = st.sidebar.radio(
+    "Enhancement engine",
+    ["Real-ESRGAN AI", "Standard (fast)"],
+    help="Real-ESRGAN AI improves details using a neural model; Standard mode uses conventional sharpening."
+)
+face_restore = st.sidebar.checkbox("AI face restoration (GFPGAN)", value=False)
 
 st.warning(
-    "यह संस्करण non-AI resize/denoise/sharpening करता है। यह वास्तविक AI face restoration या AI-generated detail नहीं करता। "
-    "AI मॉडल को अलग से install और configure करना होगा। 4K processing के लिए hosting memory/time limits का ध्यान रखें।"
+    "AI mode के लिए requirements-ai.txt की compatible dependencies और पहली बार model weights download जरूरी हैं। "
+    "Free hosting में लंबे वीडियो/4K पर RAM या timeout आ सकता है। Standard mode तेजी से conventional enhancement करता है।"
 )
 
 if media_type == "Image Enhancer":
@@ -274,12 +359,12 @@ if media_type == "Image Enhancer":
             try:
                 with st.spinner("इमेज प्रोसेस हो रही है..."):
                     data, w, h, mime, ext = process_image(
-                        upload, quality, ratio_name, fit_mode, denoise, sharpness, contrast
+                        upload, quality, ratio_name, fit_mode, engine, face_restore, denoise, sharpness, contrast
                     )
                 with right:
                     st.subheader("Enhanced")
                     st.image(data, use_container_width=True)
-                st.success(f"आउटपुट: {w} × {h} px")
+                st.success(f"आउटपुट: {w} × {h} px | इंजन: {engine}")
                 st.download_button(
                     "⬇️ Download enhanced image", data=data,
                     file_name=f"naxcy_enhanced{ext}", mime=mime, type="primary"
@@ -297,9 +382,9 @@ else:
             progress = st.progress(0.0, text="शुरू हो रहा है...")
             try:
                 data, w, h, frames = process_video(
-                    upload, quality, ratio_name, fit_mode, denoise, sharpness, contrast, progress
+                    upload, quality, ratio_name, fit_mode, engine, face_restore, denoise, sharpness, contrast, progress
                 )
-                st.success(f"पूरा हुआ: {w} × {h} px, {frames} फ्रेम। मूल ऑडियो को आउटपुट में शामिल किया गया है, यदि उपलब्ध था।")
+                st.success(f"पूरा हुआ: {w} × {h} px, {frames} फ्रेम | इंजन: {engine}। मूल ऑडियो उपलब्ध होने पर जोड़ा गया है।")
                 st.video(data)
                 st.download_button(
                     "⬇️ Download enhanced video", data=data,
@@ -310,7 +395,7 @@ else:
 
 with st.expander("AI restoration के बारे में"):
     st.write(
-        "Real-ESRGAN/GFPGAN जैसे मॉडल जोड़ने के लिए compatible PyTorch, model weights और पर्याप्त RAM/GPU चाहिए। "
-        "इस code में वे जानबूझकर automatic रूप से download/run नहीं किए जाते, ताकि deployment में अचानक भारी download, "
-        "incompatible dependencies या memory crash न हो।"
+        "Real-ESRGAN AI neural upscaling करता है और GFPGAN optional face restoration देता है। पहली बार model weights download होंगे। "
+        "AI कभी-कभी चेहरे की कुछ detail अनुमान से बना सकता है। Free hosting में model dependency conflicts या memory limits आ सकती हैं। "
+        "यदि AI dependencies install नहीं हैं तो Standard (fast) mode चुनें।"
     )
