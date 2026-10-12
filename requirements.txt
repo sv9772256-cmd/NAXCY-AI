@@ -1,10 +1,4 @@
 streamlit>=1.36.0,<2
-opencv-python-headless>=4.8
+opencv-python-headless>=4.8.0
 numpy<2
 imageio-ffmpeg>=0.4.9
-Pillow>=9.5.0
-torch
-torchvision
-realesrgan
-gfpgan
-git+https://github.com
