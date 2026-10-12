@@ -1,6 +1,0 @@
-# Optional AI dependencies. These may need version adjustments for the Python runtime.
-torch
-torchvision
-basicsr
-realesrgan
-gfpgan
