@@ -5,6 +5,6 @@ imageio-ffmpeg>=0.4.9
 Pillow>=9.5.0
 torch
 torchvision
-gfpgan
-basicsr
 realesrgan
+gfpgan
+git+https://github.com
