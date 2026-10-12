@@ -290,7 +290,7 @@ def process_video(upload, quality, ratio_name, fit_mode, engine, face_restore, d
                 writer.stdin.write(np.ascontiguousarray(frame).tobytes())
                 count += 1
                 if total > 0 and (count % 3 == 0 or count == total):
-                    progress(min(count / total, 0.99), text=f"फ्रेम प्रोसेस हो रहे हैं: {count}/{total}")
+                    progress.progress(min(count / total, 0.99), text=f"फ्रेम प्रोसेस हो रहे हैं: {count}/{total}")
             writer.stdin.close()
             writer.wait(timeout=900)
         except Exception:
@@ -315,7 +315,7 @@ def process_video(upload, quality, ratio_name, fit_mode, engine, face_restore, d
             raise RuntimeError("वीडियो encode नहीं हो पाया: " + log_text)
 
         remux_audio(silent, source, output)
-        progress(1.0, text="पूरा हुआ")
+        progress.progress(1.0, text="पूरा हुआ")
         with open(output, "rb") as f:
             data = f.read()
         return data, out_w, out_h, count
