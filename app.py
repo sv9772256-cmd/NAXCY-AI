@@ -25,8 +25,11 @@ def even(v):
     return v if v%2==0 else v+1
 
 def target_size(shape_tuple, res_name, ratio_name):
-    # Shape se correct h aur w nikalne ke liye fix
-    h, w = shape_tuple[0], shape_tuple[1]
+    # Tuple Unpacking Fix
+    if isinstance(shape_tuple, (tuple, list)) and len(shape_tuple) >= 2:
+        h, w = shape_tuple[0], shape_tuple[1]
+    else:
+        h, w = shape_tuple, shape_tuple
     rh=RES[res_name]; ratio=RATIOS[ratio_name]
     if ratio is None:
         scale=1 if rh is None else rh/float(h)
@@ -52,7 +55,6 @@ def enhance_frame(frame,denoise_strength,sharpness,color_intensity,brightness,co
     out=frame.copy()
     if denoise_strength>0:
         n=int(denoise_strength)
-        # Performance ke liye windows size tight (3, 9) kiye hain taaki video processing fast ho
         out=cv2.fastNlMeansDenoisingColored(out,None,n,n,3,9)
     if color_intensity!=1:
         hsv=cv2.cvtColor(out,cv2.COLOR_BGR2HSV).astype(np.float32)
@@ -132,11 +134,9 @@ def process_video(upload,settings,progress):
             writer=subprocess.Popen(cmd,stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,stderr=log)
             count=0
             
-            # Safe Chunk/Batch Processing (RAM limit lagayi gayi hai)
             BATCH_SIZE = 8
             with ThreadPoolExecutor(max_workers=4) as executor:
                 try:
-                    # Pehla frame likhein
                     proc_first = process_single_frame(first_frame, den, sharp, color, bright, cont, ow, oh, mode)
                     writer.stdin.write(np.ascontiguousarray(proc_first).tobytes())
                     count += 1
@@ -154,7 +154,6 @@ def process_video(upload,settings,progress):
                         if not batch_frames:
                             break
                         
-                        # Thread pool me sirf limited batch chalega
                         futures = [executor.submit(process_single_frame, f, den, sharp, color, bright, cont, ow, oh, mode) for f in batch_frames]
                         
                         for future in futures:
@@ -208,3 +207,6 @@ if media=="Image Enhancer":
         with b:
             st.subheader("Enhanced Output")
             if st.button("✨ Enhance image",type="primary"):
+                with st.spinner("Processing..."):
+                    try:
+                        out_bytes,w,h,mime,ext=process_image(upload,settings)
