@@ -25,11 +25,9 @@ def even(v):
     return v if v%2==0 else v+1
 
 def target_size(shape_tuple, res_name, ratio_name):
-    # Tuple Unpacking Fix
-    if isinstance(shape_tuple, (tuple, list)) and len(shape_tuple) >= 2:
-        h, w = shape_tuple[0], shape_tuple[1]
-    else:
-        h, w = shape_tuple, shape_tuple
+    # Perfect Fix: shape_tuple (h, w, c) se elements sahi tarike se access kiye gaye hain
+    h = shape_tuple[0]
+    w = shape_tuple[1]
     rh=RES[res_name]; ratio=RATIOS[ratio_name]
     if ratio is None:
         scale=1 if rh is None else rh/float(h)
@@ -210,3 +208,4 @@ if media=="Image Enhancer":
                 with st.spinner("Processing..."):
                     try:
                         out_bytes,w,h,mime,ext=process_image(upload,settings)
+                        st.image(out_bytes,use_container_width=True)
