@@ -1,10 +1,9 @@
-import os, subprocess, tempfile, time
+import os, subprocess, tempfile
 from pathlib import Path
 import cv2
 import numpy as np
 import streamlit as st
 import imageio_ffmpeg
-from concurrent.futures import ThreadPoolExecutor
 
 st.set_page_config(page_title="NAXCY AI PRO", page_icon="⚡", layout="wide")
 st.markdown("""
@@ -24,10 +23,7 @@ def even(v):
     v=max(2,int(round(v)))
     return v if v%2==0 else v+1
 
-def target_size(shape_tuple, res_name, ratio_name):
-    # FULLY ANALYZED FIX: shape_tuple se Height aur Width को सुरक्षित रूप से निकालना
-    h = shape_tuple[0]
-    w = shape_tuple[1]
+def target_size(w,h,res_name,ratio_name):
     rh=RES[res_name]; ratio=RATIOS[ratio_name]
     if ratio is None:
         scale=1 if rh is None else rh/float(h)
@@ -53,7 +49,7 @@ def enhance_frame(frame,denoise_strength,sharpness,color_intensity,brightness,co
     out=frame.copy()
     if denoise_strength>0:
         n=int(denoise_strength)
-        out=cv2.fastNlMeansDenoisingColored(out,None,n,n,3,9)
+        out=cv2.fastNlMeansDenoisingColored(out,None,n,n,7,21)
     if color_intensity!=1:
         hsv=cv2.cvtColor(out,cv2.COLOR_BGR2HSV).astype(np.float32)
         hsv[:,:,1]=np.clip(hsv[:,:,1]*color_intensity,0,255)
@@ -66,20 +62,16 @@ def enhance_frame(frame,denoise_strength,sharpness,color_intensity,brightness,co
         out=cv2.addWeighted(out,1+strength,blurred,-strength,0)
     return np.clip(out,0,255).astype(np.uint8)
 
-def process_single_frame(frame, den, sharp, color, bright, cont, ow, oh, mode):
-    f = enhance_frame(frame, den, sharp, color, bright, cont)
-    return fit_frame(f, ow, oh, mode)
-
 def ffmpeg():
     return imageio_ffmpeg.get_ffmpeg_exe()
 
 def process_image(upload,settings):
     raw=np.frombuffer(upload.getvalue(),np.uint8)
     img=cv2.imdecode(raw,cv2.IMREAD_COLOR)
-    if img is None: raise ValueError("Image read nahi ho payi. JPG, PNG ya WEBP chune.")
+    if img is None: raise ValueError("इमेज पढ़ नहीं पाए। JPG, PNG या WEBP चुनें।")
     den,sharp,color,bright,cont,res,ratio,mode=settings
     img=enhance_frame(img,den,sharp,color,bright,cont)
-    w,h=target_size(img.shape,res,ratio)
+    w,h=target_size(img.shape[1],img.shape[0],res,ratio)
     img=fit_frame(img,w,h,mode)
     ext=Path(upload.name).suffix.lower()
     if ext not in (".png",".webp",".jpg",".jpeg"): ext=".jpg"
@@ -87,7 +79,7 @@ def process_image(upload,settings):
     elif ext==".webp": params,mime=[cv2.IMWRITE_WEBP_QUALITY,95],"image/webp"
     else: ext=".jpg"; params,mime=[cv2.IMWRITE_JPEG_QUALITY,95],"image/jpeg"
     ok,enc=cv2.imencode(ext,img,params)
-    if not ok: raise RuntimeError("Enhanced image save nahi ho pai.")
+    if not ok: raise RuntimeError("Enhanced image save नहीं हो पाई।")
     return enc.tobytes(),w,h,mime,ext
 
 def video_info(path):
@@ -104,7 +96,7 @@ def add_original_audio(silent,source,out):
          "-af","aresample=async=1:first_pts=0","-shortest","-movflags","+faststart",out]
     p=subprocess.run(cmd,capture_output=True,text=True,timeout=900)
     if p.returncode or not os.path.exists(out) or os.path.getsize(out)==0:
-        raise RuntimeError("Original audio jodne me samasya: "+(p.stderr or "FFmpeg error")[-1000:])
+        raise RuntimeError("Original audio जोड़ने में समस्या: "+(p.stderr or "FFmpeg error")[-1000:])
 
 def process_video(upload,settings,progress):
     den,sharp,color,bright,cont,res,ratio,mode=settings
@@ -113,74 +105,41 @@ def process_video(upload,settings,progress):
         source=os.path.join(td,"source"+suffix); silent=os.path.join(td,"silent.mp4"); out=os.path.join(td,"naxcy.mp4")
         with open(source,"wb") as f: f.write(upload.getvalue())
         meta=video_info(source)
-        if meta["w"]<1 or meta["h"]<1: raise ValueError("Video read nahi ho paya.")
-        
-        cap=cv2.VideoCapture(source)
-        ok,first_frame=cap.read()
-        if not ok: cap.release(); raise ValueError("Video me valid frame nahi mila.")
-        
-        ow,oh=target_size(first_frame.shape,res,ratio)
-        
+        if meta["w"]<1 or meta["h"]<1: raise ValueError("वीडियो पढ़ नहीं पाए।")
+        cap=cv2.VideoCapture(source); ok,frame=cap.read()
+        if not ok: cap.release(); raise ValueError("वीडियो में पढ़ने योग्य फ्रेम नहीं मिला।")
+        frame=enhance_frame(frame,den,sharp,color,bright,cont)
+        ow,oh=target_size(frame.shape[1],frame.shape[0],res,ratio); frame=fit_frame(frame,ow,oh,mode)
         cmd=[ffmpeg(),"-hide_banner","-loglevel","error","-y","-f","rawvideo","-pixel_format","bgr24",
              "-video_size",f"{ow}x{oh}","-framerate",str(meta["fps"]),"-i","-","-an","-c:v","libx264",
-             "-preset","ultrafast","-crf","23","-pix_fmt","yuv420p","-movflags","+faststart",silent]
-        
+             "-preset","veryfast","-crf","18","-pix_fmt","yuv420p","-movflags","+faststart",silent]
         logpath=os.path.join(td,"ffmpeg.log")
-        start_time = time.time()
-        
         with open(logpath,"wb") as log:
             writer=subprocess.Popen(cmd,stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,stderr=log)
             count=0
-            
-            BATCH_SIZE = 8
-            with ThreadPoolExecutor(max_workers=4) as executor:
+            try:
+                writer.stdin.write(np.ascontiguousarray(frame).tobytes()); count=1
+                while True:
+                    ok,frame=cap.read()
+                    if not ok: break
+                    frame=enhance_frame(frame,den,sharp,color,bright,cont)
+                    frame=fit_frame(frame,ow,oh,mode)
+                    writer.stdin.write(np.ascontiguousarray(frame).tobytes()); count+=1
+                    if meta["n"]>0 and count%5==0:
+                        progress.progress(min(count/meta["n"],.99),text=f"Frames: {count}/{meta['n']}")
+                writer.stdin.close(); writer.wait(timeout=900)
+            except Exception:
+                if writer.poll() is None: writer.kill(); writer.wait()
+                raise
+            finally:
+                cap.release()
                 try:
-                    proc_first = process_single_frame(first_frame, den, sharp, color, bright, cont, ow, oh, mode)
-                    writer.stdin.write(np.ascontiguousarray(proc_first).tobytes())
-                    count += 1
-                    
-                    more_frames = True
-                    while more_frames:
-                        batch_frames = []
-                        for _ in range(BATCH_SIZE):
-                            ok, frame = cap.read()
-                            if not ok:
-                                more_frames = False
-                                break
-                            batch_frames.append(frame)
-                        
-                        if not batch_frames:
-                            break
-                        
-                        futures = [executor.submit(process_single_frame, f, den, sharp, color, bright, cont, ow, oh, mode) for f in batch_frames]
-                        
-                        for future in futures:
-                            proc_frame = future.result()
-                            writer.stdin.write(np.ascontiguousarray(proc_frame).tobytes())
-                            count += 1
-                            
-                            if meta["n"] > 0 and count % 2 == 0:
-                                pct = min(count / meta["n"], 0.99)
-                                elapsed = time.time() - start_time
-                                eta = (elapsed / pct) - elapsed if pct > 0 else 0
-                                progress.progress(pct, text=f"⚡ Processing: {int(pct*100)}% | Frames: {count}/{meta['n']} | Time Left: {int(eta)}s")
-                                
-                except Exception:
-                    if writer.poll() is None: writer.kill(); writer.wait()
-                    raise
-                finally:
-                    cap.release()
-                    try:
-                        if writer.stdin and not writer.stdin.closed: writer.stdin.close()
-                    except Exception: pass
-            
-            writer.wait(timeout=900)
-            
+                    if writer.stdin and not writer.stdin.closed: writer.stdin.close()
+                except Exception: pass
         if writer.returncode or not os.path.exists(silent) or os.path.getsize(silent)==0:
-            raise RuntimeError("Video encode nahi hua: "+Path(logpath).read_text(errors="replace")[-1000:])
-        
+            raise RuntimeError("वीडियो encode नहीं हुआ: "+Path(logpath).read_text(errors="replace")[-1000:])
         add_original_audio(silent,source,out)
-        progress.progress(1.0,text="✨ 100% Complete!")
+        progress.progress(1.0,text="Complete")
         return Path(out).read_bytes(),ow,oh,count
 
 st.sidebar.header("⚙️ NAXCY Settings")
@@ -194,18 +153,34 @@ color_pct=st.sidebar.slider("Color intensity (%)",0,100,100,5)
 bright=st.sidebar.slider("Brightness",-50,50,0,5)
 cont=st.sidebar.slider("Contrast",0.5,1.5,1.0,0.05)
 settings=(den,sharp_pct/100,color_pct/100,bright,cont,res,ratio,mode)
+st.info("यह stable OpenCV enhancement baseline है। 4K output dimensions बढ़ाता है, लेकिन असली नई detail या पूरी तरह blur/artifact removal की गारंटी नहीं देता।")
 
 if media=="Image Enhancer":
-    upload=st.file_uploader("Apni Image upload kare",type=["jpg","jpeg","png","webp"])
+    upload=st.file_uploader("अपनी इमेज अपलोड करें",type=["jpg","jpeg","png","webp"])
     if upload:
         a,b=st.columns(2)
-        with a: 
-            st.subheader("Original")
-            st.image(upload,use_container_width=True)
-        with b:
-            st.subheader("Enhanced Output")
-            if st.button("✨ Enhance image",type="primary"):
-                with st.spinner("Processing..."):
-                    try:
-                        out_bytes,w,h,mime,ext=process_image(upload,settings)
-                        st.image(out_bytes,use_container_width=True)
+        with a: st.subheader("Original"); st.image(upload,use_container_width=True)
+        if st.button("✨ Enhance image",type="primary"):
+            try:
+                with st.spinner("Image processing..."):
+                    data,w,h,mime,ext=process_image(upload,settings)
+                with b: st.subheader("Enhanced"); st.image(data,use_container_width=True)
+                st.success(f"Output: {w} × {h} px")
+                st.download_button("⬇️ Download enhanced image",data=data,file_name="naxcy_enhanced"+ext,mime=mime,type="primary")
+            except Exception as e: st.error(f"Image processing error: {e}")
+else:
+    upload=st.file_uploader("अपना वीडियो अपलोड करें",type=["mp4","mov","avi","mkv","webm"])
+    if upload:
+        st.video(upload); st.caption(f"File size: {upload.size/(1024*1024):.1f} MB")
+        if upload.size>200*1024*1024: st.warning("बड़ी वीडियो पर Cloud timeout या memory limit आ सकती है।")
+        if st.button("✨ Enhance video (keep original audio)",type="primary"):
+            bar=st.progress(0.0,text="Starting...")
+            try:
+                data,w,h,n=process_video(upload,settings,bar)
+                st.success(f"Output: {w} × {h} px | Frames: {n}. Original audio stream जोड़ी गई है यदि मौजूद थी।")
+                st.video(data)
+                st.download_button("⬇️ Download enhanced video",data=data,file_name="naxcy_enhanced.mp4",mime="video/mp4",type="primary")
+            except Exception as e: st.error(f"Video processing error: {e}")
+
+with st.expander("महत्वपूर्ण जानकारी"):
+    st.write("मूल ऑडियो को AAC में दोबारा encode किया जाता है, इसलिए वह bit-for-bit identical नहीं है। Motion blur removal के लिए optical-flow deblur model शामिल नहीं है। लंबे 4K वीडियो के लिए पर्याप्त CPU/RAM और hosting time जरूरी है।")
