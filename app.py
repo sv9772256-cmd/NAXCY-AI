@@ -42,7 +42,7 @@ st.markdown("""
 # ==========================================
 # CORE ENHANCEMENT PIPELINE (ULTRA CLEAN)
 # ==========================================
-def enhance_frame(frame, denoise_strength, sharpness_strength, use_clahe, contrast_val, brightness_val, detail_enhance):
+def enhance_frame(frame, noise_strength, sharpness_strength, use_clahe, contrast_val, brightness_val, detail_enhance):
     """
     Advanced multi-stage frame enhancement for crisp, clean, and professional output.
     """
@@ -52,9 +52,9 @@ def enhance_frame(frame, denoise_strength, sharpness_strength, use_clahe, contra
     # 2. Advanced Denoising (Removes digital grain/noise cleanly)
     if denoise_strength > 0:
         # Adjusted for balanced speed and clean results
-        h_lum = denoise_strength
-        h_chroma = denoise_strength
-        result = cv2.fastNlMeansDenoisingColored(result, None, h_lum, h_chroma, 7, 15)
+        h_lum = noise_strength
+        h_chroma = noise_strength
+        result = cv2.fastNlMeansnoisingColored(result, None, h_lum, h_chroma, 7, 15)
         
     # 3. Smart Contrast (CLAHE - Localized Contrast Enhancement)
     if use_clahe:
@@ -75,8 +75,7 @@ def enhance_frame(frame, denoise_strength, sharpness_strength, use_clahe, contra
         
     # 6. High-Pass Sharpness Filter (Crisp edges without artifacts)
     if sharpness_strength > 0:
-        gaussian = cv2.GaussianBlur(result, (0, 0), 2.0)
-        result = cv2.addWeighted(result, 1.0 + sharpness_strength, gaussian, -sharpness_strength, 0)
+        result = cv2.addWeighted(result, 1.0 + sharpness_strength, -sharpness_strength, 0)
         
     return result
 
@@ -206,7 +205,7 @@ if uploaded_file is not None:
     elif mode == "Video Studio":
         st.subheader("🎬 Video Enhancement Processing")
         
-        cap = cv2.VideoCapture(tfile.name)
+        cap = cv2.Videoenhance(tfile.name)
         w_src = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         h_src = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fps = cap.get(cv2.CAP_PROP_FPS)
