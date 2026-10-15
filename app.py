@@ -1,186 +1,539 @@
-import os, subprocess, tempfile
+import hashlib
+import io
+import os
+import subprocess
+import tempfile
+import time
+from collections import deque
 from pathlib import Path
-import cv2
-import numpy as np
-import streamlit as st
+
 import imageio_ffmpeg
+import streamlit as st
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
-st.set_page_config(page_title="NAXCY AI PRO", page_icon="⚡", layout="wide")
-st.markdown("""
-<style>
-.stApp{background:#080e1b;color:#eef5ff}
-.nx{text-align:center;padding:24px;border:1px solid #00e6c3;border-radius:18px;
-background:linear-gradient(135deg,#03111e,#092b43)}
-.nx h1{color:#00ffd0;letter-spacing:3px}
-</style>
-<div class="nx"><h1>⚡ NAXCY AI PRO ⚡</h1><p>VIDEO & IMAGE ENHANCEMENT STUDIO</p></div>
-""", unsafe_allow_html=True)
 
-RES = {"Original resolution":None,"720p HD":720,"1080p Full HD":1080,"2K QHD (1440p)":1440,"4K UHD (2160p)":2160}
-RATIOS = {"Original aspect ratio":None,"9:16 — Reels / Shorts":(9,16),"16:9 — YouTube":(16,9),"1:1 — Square":(1,1),"4:5 — Portrait":(4,5),"3:2 — Photo":(3,2)}
+st.set_page_config(
+    page_title="NAXCY-AI | KARTIK SINGH",
+    page_icon="⚡",
+    layout="wide",
+)
 
-def even(v):
-    v=max(2,int(round(v)))
-    return v if v%2==0 else v+1
+MAX_UPLOAD_MB = 200
+MAX_IMAGE_PIXELS = 40_000_000
+Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
 
-def target_size(w,h,res_name,ratio_name):
-    rh=RES[res_name]; ratio=RATIOS[ratio_name]
-    if ratio is None:
-        scale=1 if rh is None else rh/float(h)
-        return even(w*scale),even(h*scale)
-    rw,rrh=ratio
-    oh=even(h if rh is None else rh)
-    return even(oh*rw/rrh),oh
+RESOLUTIONS = {
+    "720p": 720,
+    "780p (Custom)": 780,
+    "1080p": 1080,
+    "2K / 1440p (QHD)": 1440,
+    "4K / 2160p (UHD)": 2160,
+}
 
-def fit_frame(frame,ow,oh,mode):
-    h,w=frame.shape[:2]
-    if (w,h)==(ow,oh): return frame
-    scale=min(ow/w,oh/h) if mode=="Pad (show entire image)" else max(ow/w,oh/h)
-    nw,nh=max(1,round(w*scale)),max(1,round(h*scale))
-    resized=cv2.resize(frame,(nw,nh),interpolation=cv2.INTER_LANCZOS4)
-    if mode=="Pad (show entire image)":
-        canvas=np.zeros((oh,ow,3),np.uint8); x=(ow-nw)//2; y=(oh-nh)//2
-        canvas[y:y+nh,x:x+nw]=resized
-        return canvas
-    x=(nw-ow)//2; y=(nh-oh)//2
-    return resized[y:y+oh,x:x+ow]
+RATIOS = {
+    "Keep Original": None,
+    "16:9": 16 / 9,
+    "9:16": 9 / 16,
+    "1:1": 1.0,
+    "4:3": 4 / 3,
+    "4:5": 4 / 5,
+}
 
-def enhance_frame(frame,denoise_strength,sharpness,color_intensity,brightness,contrast):
-    out=frame.copy()
-    if denoise_strength>0:
-        n=int(denoise_strength)
-        out=cv2.fastNlMeansDenoisingColored(out,None,n,n,7,21)
-    if color_intensity!=1:
-        hsv=cv2.cvtColor(out,cv2.COLOR_BGR2HSV).astype(np.float32)
-        hsv[:,:,1]=np.clip(hsv[:,:,1]*color_intensity,0,255)
-        out=cv2.cvtColor(hsv.astype(np.uint8),cv2.COLOR_HSV2BGR)
-    if contrast!=1 or brightness:
-        out=cv2.convertScaleAbs(out,alpha=float(contrast),beta=int(brightness))
-    if sharpness>0:
-        blurred=cv2.GaussianBlur(out,(0,0),1.0)
-        strength=sharpness*1.1
-        out=cv2.addWeighted(out,1+strength,blurred,-strength,0)
-    return np.clip(out,0,255).astype(np.uint8)
 
-def ffmpeg():
+st.markdown(
+    """
+    <style>
+    .stApp {background:#0d1119;color:#edf8ff;}
+    section[data-testid="stSidebar"] {background:#20232d;}
+    .brand {
+        padding:28px 16px;
+        border:1px solid #16e5c2;
+        border-radius:18px;
+        background:linear-gradient(120deg,#07121d,#08283b);
+        box-shadow:0 0 20px #00e6bf30;
+        text-align:center;
+        margin-bottom:24px;
+    }
+    .brand h1 {
+        color:#21ffd4;
+        letter-spacing:5px;
+        margin:0;
+        text-shadow:0 0 15px #00dcb0;
+    }
+    .creator {color:#ffffff;letter-spacing:3px;margin-top:10px;}
+    .tagline {color:#a9bdcb;font-size:13px;margin-top:8px;}
+    div.stButton > button {
+        background:#00c9a7;color:#07151a;
+        border:0;border-radius:10px;
+    }
+    </style>
+    <div class="brand">
+        <h1>⚡ NAXCY-AI ⚡</h1>
+        <div class="creator">KARTIK SINGH</div>
+        <div class="tagline">VIDEO & IMAGE ENHANCEMENT STUDIO</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+@st.cache_resource
+def ffmpeg_executable():
     return imageio_ffmpeg.get_ffmpeg_exe()
 
-def process_image(upload,settings):
-    raw=np.frombuffer(upload.getvalue(),np.uint8)
-    img=cv2.imdecode(raw,cv2.IMREAD_COLOR)
-    if img is None: raise ValueError("इमेज पढ़ नहीं पाए। JPG, PNG या WEBP चुनें।")
-    den,sharp,color,bright,cont,res,ratio,mode=settings
-    img=enhance_frame(img,den,sharp,color,bright,cont)
-    w,h=target_size(img.shape[1],img.shape[0],res,ratio)
-    img=fit_frame(img,w,h,mode)
-    ext=Path(upload.name).suffix.lower()
-    if ext not in (".png",".webp",".jpg",".jpeg"): ext=".jpg"
-    if ext==".png": params,mime=[cv2.IMWRITE_PNG_COMPRESSION,3],"image/png"
-    elif ext==".webp": params,mime=[cv2.IMWRITE_WEBP_QUALITY,95],"image/webp"
-    else: ext=".jpg"; params,mime=[cv2.IMWRITE_JPEG_QUALITY,95],"image/jpeg"
-    ok,enc=cv2.imencode(ext,img,params)
-    if not ok: raise RuntimeError("Enhanced image save नहीं हो पाई।")
-    return enc.tobytes(),w,h,mime,ext
 
-def video_info(path):
-    cap=cv2.VideoCapture(path)
-    info={"w":int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),"h":int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
-          "fps":float(cap.get(cv2.CAP_PROP_FPS)),"n":int(cap.get(cv2.CAP_PROP_FRAME_COUNT))}
-    cap.release()
-    if not np.isfinite(info["fps"]) or info["fps"]<=0 or info["fps"]>240: info["fps"]=30.0
-    return info
+@st.cache_resource
+def nvenc_available(ffmpeg):
+    """Test actual encoding, not merely encoder registration."""
+    command = [
+        ffmpeg,
+        "-hide_banner", "-loglevel", "error", "-nostdin",
+        "-f", "lavfi",
+        "-i", "color=c=black:s=256x256:r=1",
+        "-frames:v", "1",
+        "-c:v", "h264_nvenc",
+        "-pix_fmt", "yuv420p",
+        "-f", "null", "-",
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            timeout=20,
+        )
+        return result.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
-def add_original_audio(silent,source,out):
-    cmd=[ffmpeg(),"-hide_banner","-loglevel","error","-y","-i",silent,"-i",source,
-         "-map","0:v:0","-map","1:a:0?","-c:v","copy","-c:a","aac","-b:a","192k",
-         "-af","aresample=async=1:first_pts=0","-shortest","-movflags","+faststart",out]
-    p=subprocess.run(cmd,capture_output=True,text=True,timeout=900)
-    if p.returncode or not os.path.exists(out) or os.path.getsize(out)==0:
-        raise RuntimeError("Original audio जोड़ने में समस्या: "+(p.stderr or "FFmpeg error")[-1000:])
 
-def process_video(upload,settings,progress):
-    den,sharp,color,bright,cont,res,ratio,mode=settings
-    suffix=Path(upload.name).suffix.lower() or ".mp4"
-    with tempfile.TemporaryDirectory(prefix="naxcy_") as td:
-        source=os.path.join(td,"source"+suffix); silent=os.path.join(td,"silent.mp4"); out=os.path.join(td,"naxcy.mp4")
-        with open(source,"wb") as f: f.write(upload.getvalue())
-        meta=video_info(source)
-        if meta["w"]<1 or meta["h"]<1: raise ValueError("वीडियो पढ़ नहीं पाए।")
-        cap=cv2.VideoCapture(source); ok,frame=cap.read()
-        if not ok: cap.release(); raise ValueError("वीडियो में पढ़ने योग्य फ्रेम नहीं मिला।")
-        frame=enhance_frame(frame,den,sharp,color,bright,cont)
-        ow,oh=target_size(frame.shape[1],frame.shape[0],res,ratio); frame=fit_frame(frame,ow,oh,mode)
-        cmd=[ffmpeg(),"-hide_banner","-loglevel","error","-y","-f","rawvideo","-pixel_format","bgr24",
-             "-video_size",f"{ow}x{oh}","-framerate",str(meta["fps"]),"-i","-","-an","-c:v","libx264",
-             "-preset","veryfast","-crf","18","-pix_fmt","yuv420p","-movflags","+faststart",silent]
-        logpath=os.path.join(td,"ffmpeg.log")
-        with open(logpath,"wb") as log:
-            writer=subprocess.Popen(cmd,stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,stderr=log)
-            count=0
-            try:
-                writer.stdin.write(np.ascontiguousarray(frame).tobytes()); count=1
-                while True:
-                    ok,frame=cap.read()
-                    if not ok: break
-                    frame=enhance_frame(frame,den,sharp,color,bright,cont)
-                    frame=fit_frame(frame,ow,oh,mode)
-                    writer.stdin.write(np.ascontiguousarray(frame).tobytes()); count+=1
-                    if meta["n"]>0 and count%5==0:
-                        progress.progress(min(count/meta["n"],.99),text=f"Frames: {count}/{meta['n']}")
-                writer.stdin.close(); writer.wait(timeout=900)
-            except Exception:
-                if writer.poll() is None: writer.kill(); writer.wait()
-                raise
-            finally:
-                cap.release()
-                try:
-                    if writer.stdin and not writer.stdin.closed: writer.stdin.close()
-                except Exception: pass
-        if writer.returncode or not os.path.exists(silent) or os.path.getsize(silent)==0:
-            raise RuntimeError("वीडियो encode नहीं हुआ: "+Path(logpath).read_text(errors="replace")[-1000:])
-        add_original_audio(silent,source,out)
-        progress.progress(1.0,text="Complete")
-        return Path(out).read_bytes(),ow,oh,count
+def even(value):
+    return max(2, int(round(value / 2)) * 2)
 
-st.sidebar.header("⚙️ NAXCY Settings")
-media=st.sidebar.radio("Media type",["Image Enhancer","Video Enhancer"])
-res=st.sidebar.selectbox("Output resolution",list(RES.keys()),index=4)
-ratio=st.sidebar.selectbox("Aspect ratio",list(RATIOS.keys()),index=1)
-mode=st.sidebar.radio("Framing mode",["Crop to fill","Pad (show entire image)"])
-den=st.sidebar.slider("Noise / grain reduction",0,10,3)
-sharp_pct=st.sidebar.slider("Sharpness intensity (%)",0,100,100,5)
-color_pct=st.sidebar.slider("Color intensity (%)",0,100,100,5)
-bright=st.sidebar.slider("Brightness",-50,50,0,5)
-cont=st.sidebar.slider("Contrast",0.5,1.5,1.0,0.05)
-settings=(den,sharp_pct/100,color_pct/100,bright,cont,res,ratio,mode)
-st.info("यह stable OpenCV enhancement baseline है। 4K output dimensions बढ़ाता है, लेकिन असली नई detail या पूरी तरह blur/artifact removal की गारंटी नहीं देता।")
 
-if media=="Image Enhancer":
-    upload=st.file_uploader("अपनी इमेज अपलोड करें",type=["jpg","jpeg","png","webp"])
-    if upload:
-        a,b=st.columns(2)
-        with a: st.subheader("Original"); st.image(upload,use_container_width=True)
-        if st.button("✨ Enhance image",type="primary"):
-            try:
-                with st.spinner("Image processing..."):
-                    data,w,h,mime,ext=process_image(upload,settings)
-                with b: st.subheader("Enhanced"); st.image(data,use_container_width=True)
-                st.success(f"Output: {w} × {h} px")
-                st.download_button("⬇️ Download enhanced image",data=data,file_name="naxcy_enhanced"+ext,mime=mime,type="primary")
-            except Exception as e: st.error(f"Image processing error: {e}")
+def target_dimensions(short_side, ratio):
+    if ratio >= 1:
+        return even(short_side * ratio), even(short_side)
+    return even(short_side), even(short_side / ratio)
+
+
+def resize_image(image, size, fit_mode):
+    if fit_mode == "Fit + black padding":
+        return ImageOps.pad(
+            image,
+            size,
+            method=Image.Resampling.LANCZOS,
+            color=(0, 0, 0),
+            centering=(0.5, 0.5),
+        )
+    return ImageOps.fit(
+        image,
+        size,
+        method=Image.Resampling.LANCZOS,
+        centering=(0.5, 0.5),
+    )
+
+
+def enhance_image(data, settings):
+    with Image.open(io.BytesIO(data)) as source:
+        if source.width * source.height > MAX_IMAGE_PIXELS:
+            raise ValueError("Image too large: maximum 40 megapixels.")
+
+        image = ImageOps.exif_transpose(source).convert("RGB")
+
+    ratio = settings["ratio"] or image.width / image.height
+    size = target_dimensions(settings["resolution"], ratio)
+
+    if max(size) > 8192:
+        raise ValueError(
+            "Output side exceeds 8192 pixels. Choose a smaller "
+            "resolution or a standard aspect ratio."
+        )
+
+    if settings["denoise"]:
+        image = image.filter(ImageFilter.MedianFilter(size=3))
+
+    image = resize_image(image, size, settings["fit"])
+    image = ImageEnhance.Color(image).enhance(settings["colour"])
+    image = ImageEnhance.Contrast(image).enhance(settings["contrast"])
+    image = ImageEnhance.Brightness(image).enhance(
+        1.0 + settings["brightness"]
+    )
+
+    if settings["sharpen"] > 0:
+        image = image.filter(
+            ImageFilter.UnsharpMask(
+                radius=1.2,
+                percent=int(settings["sharpen"] * 100),
+                threshold=3,
+            )
+        )
+
+    output = io.BytesIO()
+    image.save(output, format="PNG", compress_level=3)
+    return output.getvalue(), size
+
+
+def video_filter(settings):
+    filters = []
+
+    # Spatial-only cleanup: no adjacent-frame mixing.
+    if settings["denoise"]:
+        filters.append("median=radius=1")
+
+    short = settings["resolution"]
+    ratio = settings["ratio"]
+    scale_algorithm = (
+        "bicubic" if settings["speed"] == "Fast" else "lanczos"
+    )
+
+    if ratio is None:
+        # Normalize display aspect ratio, including non-square pixels.
+        filters.append(
+            f"scale="
+            f"w='if(gte(dar,1),"
+            f"min(8192,round({short}*dar/2)*2),{short})':"
+            f"h='if(gte(dar,1),{short},"
+            f"min(8192,round({short}/dar/2)*2))':"
+            f"flags={scale_algorithm}"
+        )
+        filters.append("setsar=1")
+    else:
+        width, height = target_dimensions(short, ratio)
+        keep = (
+            "decrease"
+            if settings["fit"] == "Fit + black padding"
+            else "increase"
+        )
+        filters.append(
+            f"scale={width}:{height}:"
+            f"force_original_aspect_ratio={keep}:"
+            f"force_divisible_by=2:"
+            f"reset_sar=1:flags={scale_algorithm}"
+        )
+        if keep == "decrease":
+            filters.append(
+                f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black"
+            )
+        else:
+            filters.append(
+                f"crop={width}:{height}:(iw-ow)/2:(ih-oh)/2"
+            )
+        filters.append("setsar=1")
+
+    filters.append(
+        f"eq=contrast={settings['contrast']}:"
+        f"brightness={settings['brightness']}:"
+        f"saturation={settings['colour']}"
+    )
+
+    if settings["sharpen"] > 0:
+        filters.append(
+            f"unsharp=5:5:{settings['sharpen']}:5:5:0"
+        )
+
+    filters.append("format=yuv420p")
+    return ",".join(filters)
+
+
+def encoding_arguments(settings, use_gpu):
+    quality = settings["quality"]
+
+    if use_gpu:
+        preset = {
+            "Fast": "p1",
+            "Balanced": "p4",
+            "Quality": "p6",
+        }[settings["speed"]]
+        return [
+            "-c:v", "h264_nvenc",
+            "-preset", preset,
+            "-rc", "vbr",
+            "-cq", str(quality),
+            "-b:v", "0",
+        ]
+
+    preset = {
+        "Fast": "ultrafast",
+        "Balanced": "veryfast",
+        "Quality": "medium",
+    }[settings["speed"]]
+
+    return [
+        "-c:v", "libx264",
+        "-preset", preset,
+        "-crf", str(quality),
+        "-threads", str(min(os.cpu_count() or 2, 16)),
+    ]
+
+
+def run_video(ffmpeg, source, output, settings, use_gpu, status):
+    command = [
+        ffmpeg,
+        "-hide_banner",
+        "-loglevel", "error",
+        "-nostdin",
+        "-y",
+        "-i", str(source),
+        "-map", "0:v:0",
+        "-map", "0:a:0?",
+        "-vf", video_filter(settings),
+        *encoding_arguments(settings, use_gpu),
+        "-pix_fmt", "yuv420p",
+        "-fps_mode", "passthrough",
+        "-c:a", "aac",
+        "-b:a", "192k",
+        "-movflags", "+faststart",
+        "-max_muxing_queue_size", "4096",
+        "-progress", "pipe:1",
+        "-nostats",
+        str(output),
+    ]
+
+    started = time.perf_counter()
+
+    # stderr goes to disk to avoid a full-pipe deadlock.
+    with tempfile.TemporaryFile(mode="w+b") as error_log:
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=error_log,
+            text=True,
+            bufsize=1,
+        )
+        latest = {}
+        try:
+            for line in process.stdout:
+                key, separator, value = line.strip().partition("=")
+                if not separator:
+                    continue
+                latest[key] = value
+
+                if key == "progress":
+                    elapsed = time.perf_counter() - started
+                    status.info(
+                        f"Processed timeline: "
+                        f"{latest.get('out_time', '00:00:00')} | "
+                        f"Speed: {latest.get('speed', '...')} | "
+                        f"Elapsed: {elapsed:.1f}s"
+                    )
+
+            code = process.wait()
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+            if process.stdout:
+                process.stdout.close()
+
+        if code != 0:
+            error_log.seek(0, os.SEEK_END)
+            length = error_log.tell()
+            error_log.seek(max(0, length - 12000))
+            message = error_log.read().decode("utf-8", errors="replace")
+            raise RuntimeError(message or "FFmpeg processing failed.")
+
+    if not output.exists() or output.stat().st_size == 0:
+        raise RuntimeError("No valid output was created.")
+
+
+with st.sidebar:
+    st.header("⚙️ Core Engine Settings")
+
+    mode = st.radio("Select mode", ["Video", "Image"])
+
+    resolution_label = st.selectbox(
+        "Output resolution",
+        list(RESOLUTIONS),
+        index=2,
+    )
+
+    ratio_label = st.selectbox("Aspect ratio", list(RATIOS))
+
+    fit_mode = st.selectbox(
+        "Ratio fitting",
+        ["Fit + black padding", "Centre crop"],
+        help="Padding keeps the full picture. Crop removes the edges.",
+    )
+
+    speed = st.selectbox(
+        "Processing mode",
+        ["Fast", "Balanced", "Quality"],
+        index=0,
+    )
+
+    st.subheader("Enhancement controls")
+    sharpen = st.slider("Sharpen", 0.0, 1.5, 0.5, 0.05)
+    colour = st.slider("Colour / saturation", 0.5, 1.5, 1.05, 0.05)
+    contrast = st.slider("Contrast", 0.8, 1.3, 1.03, 0.01)
+    brightness = st.slider("Brightness", -0.15, 0.15, 0.0, 0.01)
+    denoise = st.checkbox(
+        "Spatial noise cleanup",
+        value=False,
+        help="Optional. May soften fine details and slow processing.",
+    )
+
+    quality = st.slider(
+        "Video compression quality — lower is better",
+        16, 28, 19,
+    )
+    gpu_requested = st.checkbox("Try NVIDIA GPU encoding", value=True)
+
+    st.caption(
+        "Fast filter-based enhancement; no neural model is loaded. "
+        "GPU encoding does not move all filters onto the GPU."
+    )
+
+
+settings = {
+    "resolution": RESOLUTIONS[resolution_label],
+    "ratio": RATIOS[ratio_label],
+    "fit": fit_mode,
+    "speed": speed,
+    "sharpen": sharpen,
+    "colour": colour,
+    "contrast": contrast,
+    "brightness": brightness,
+    "denoise": denoise,
+    "quality": quality,
+}
+
+st.subheader(f"🎬 {mode} Enhancement Studio")
+st.caption(
+    "No frame blending or motion interpolation. "
+    "Existing source blur may remain."
+)
+st.info(
+    "Use Fast mode and disable noise cleanup for the fastest attempt. "
+    "30-second → 60-second processing is a target, not a guarantee."
+)
+
+types = (
+    ["mp4", "mov", "mkv", "avi", "webm"]
+    if mode == "Video"
+    else ["jpg", "jpeg", "png", "webp", "bmp"]
+)
+
+upload = st.file_uploader(
+    f"Upload {mode.lower()}",
+    type=types,
+)
+
+if upload is not None:
+    if upload.size > MAX_UPLOAD_MB * 1024 * 1024:
+        st.error(f"Maximum upload size is {MAX_UPLOAD_MB} MB.")
+        st.stop()
+
+    data = upload.getvalue()
+    signature = hashlib.sha256(
+        data + mode.encode() + repr(settings).encode()
+    ).hexdigest()
+
+    with st.expander("Original preview", expanded=False):
+        if mode == "Video":
+            st.video(data)
+        else:
+            st.image(data)
+
+    if st.button("⚡ Enhance Now", type="primary"):
+        st.session_state.pop("naxcy_result", None)
+        started = time.perf_counter()
+        status = st.empty()
+
+        try:
+            if mode == "Image":
+                with st.spinner("Enhancing image..."):
+                    result_bytes, size = enhance_image(data, settings)
+
+                result = {
+                    "signature": signature,
+                    "data": result_bytes,
+                    "filename": "NAXCY_AI_enhanced.png",
+                    "mime": "image/png",
+                    "mode": mode,
+                    "details": f"{size[0]} × {size[1]} | PNG",
+                }
+            else:
+                ffmpeg = ffmpeg_executable()
+                status.info("Checking encoder...")
+
+                use_gpu = (
+                    gpu_requested and nvenc_available(ffmpeg)
+                )
+
+                if gpu_requested and not use_gpu:
+                    st.warning(
+                        "NVIDIA encoding unavailable. Using CPU."
+                    )
+
+                suffix = Path(upload.name).suffix.lower()
+
+                with tempfile.TemporaryDirectory(
+                    prefix="naxcy_"
+                ) as workdir:
+                    source = Path(workdir) / f"input{suffix}"
+                    output = Path(workdir) / "enhanced.mp4"
+                    source.write_bytes(data)
+
+                    try:
+                        run_video(
+                            ffmpeg, source, output,
+                            settings, use_gpu, status,
+                        )
+                    except RuntimeError:
+                        if not use_gpu:
+                            raise
+                        st.warning(
+                            "GPU attempt failed. Retrying on CPU."
+                        )
+                        use_gpu = False
+                        run_video(
+                            ffmpeg, source, output,
+                            settings, False, status,
+                        )
+
+                    result_bytes = output.read_bytes()
+
+                result = {
+                    "signature": signature,
+                    "data": result_bytes,
+                    "filename": "NAXCY_AI_enhanced.mp4",
+                    "mime": "video/mp4",
+                    "mode": mode,
+                    "details": (
+                        f"{resolution_label} | "
+                        f"{'NVIDIA' if use_gpu else 'CPU'} encoding"
+                    ),
+                }
+
+            result["elapsed"] = time.perf_counter() - started
+            st.session_state["naxcy_result"] = result
+            status.empty()
+
+        except Exception as exc:
+            status.empty()
+            st.error(
+                "Enhancement failed. Check the error below."
+            )
+            st.code(str(exc)[-12000:])
+
+    result = st.session_state.get("naxcy_result")
+
+    if result and result["signature"] == signature:
+        st.success(
+            f"Completed in {result['elapsed']:.1f} seconds | "
+            f"{result['details']}"
+        )
+
+        if result["mode"] == "Video":
+            st.video(result["data"])
+        else:
+            st.image(result["data"])
+
+        st.download_button(
+            "⬇️ Download Enhanced File",
+            data=result["data"],
+            file_name=result["filename"],
+            mime=result["mime"],
+        )
 else:
-    upload=st.file_uploader("अपना वीडियो अपलोड करें",type=["mp4","mov","avi","mkv","webm"])
-    if upload:
-        st.video(upload); st.caption(f"File size: {upload.size/(1024*1024):.1f} MB")
-        if upload.size>200*1024*1024: st.warning("बड़ी वीडियो पर Cloud timeout या memory limit आ सकती है।")
-        if st.button("✨ Enhance video (keep original audio)",type="primary"):
-            bar=st.progress(0.0,text="Starting...")
-            try:
-                data,w,h,n=process_video(upload,settings,bar)
-                st.success(f"Output: {w} × {h} px | Frames: {n}. Original audio stream जोड़ी गई है यदि मौजूद थी।")
-                st.video(data)
-                st.download_button("⬇️ Download enhanced video",data=data,file_name="naxcy_enhanced.mp4",mime="video/mp4",type="primary")
-            except Exception as e: st.error(f"Video processing error: {e}")
-
-with st.expander("महत्वपूर्ण जानकारी"):
-    st.write("मूल ऑडियो को AAC में दोबारा encode किया जाता है, इसलिए वह bit-for-bit identical नहीं है। Motion blur removal के लिए optical-flow deblur model शामिल नहीं है। लंबे 4K वीडियो के लिए पर्याप्त CPU/RAM और hosting time जरूरी है।")
+    st.caption("Upload a file to begin.")
