@@ -24,8 +24,9 @@ def even(v):
     v=max(2,int(round(v)))
     return v if v%2==0 else v+1
 
-def target_size(w,h,res_name,ratio_name):
-    if len(w) > 2: h, w = w[0], w[1] # Fix tuple issue
+def target_size(shape_tuple, res_name, ratio_name):
+    # Shape se correct h aur w nikalne ke liye fix
+    h, w = shape_tuple[0], shape_tuple[1]
     rh=RES[res_name]; ratio=RATIOS[ratio_name]
     if ratio is None:
         scale=1 if rh is None else rh/float(h)
@@ -51,8 +52,8 @@ def enhance_frame(frame,denoise_strength,sharpness,color_intensity,brightness,co
     out=frame.copy()
     if denoise_strength>0:
         n=int(denoise_strength)
-        # Fast processing ke liye photo Denoise template-window sizes optimize kiya gaya hai
-        out=cv2.fastNlMeansDenoisingColored(out,None,n,n,5,15)
+        # Performance ke liye windows size tight (3, 9) kiye hain taaki video processing fast ho
+        out=cv2.fastNlMeansDenoisingColored(out,None,n,n,3,9)
     if color_intensity!=1:
         hsv=cv2.cvtColor(out,cv2.COLOR_BGR2HSV).astype(np.float32)
         hsv[:,:,1]=np.clip(hsv[:,:,1]*color_intensity,0,255)
@@ -78,7 +79,7 @@ def process_image(upload,settings):
     if img is None: raise ValueError("Image read nahi ho payi. JPG, PNG ya WEBP chune.")
     den,sharp,color,bright,cont,res,ratio,mode=settings
     img=enhance_frame(img,den,sharp,color,bright,cont)
-    w,h=target_size(img.shape,img.shape,res,ratio)
+    w,h=target_size(img.shape,res,ratio)
     img=fit_frame(img,w,h,mode)
     ext=Path(upload.name).suffix.lower()
     if ext not in (".png",".webp",".jpg",".jpeg"): ext=".jpg"
@@ -118,11 +119,11 @@ def process_video(upload,settings,progress):
         ok,first_frame=cap.read()
         if not ok: cap.release(); raise ValueError("Video me valid frame nahi mila.")
         
-        ow,oh=target_size(first_frame.shape,first_frame.shape,res,ratio)
+        ow,oh=target_size(first_frame.shape,res,ratio)
         
         cmd=[ffmpeg(),"-hide_banner","-loglevel","error","-y","-f","rawvideo","-pixel_format","bgr24",
              "-video_size",f"{ow}x{oh}","-framerate",str(meta["fps"]),"-i","-","-an","-c:v","libx264",
-             "-preset","ultrafast","-crf","20","-pix_fmt","yuv420p","-movflags","+faststart",silent]
+             "-preset","ultrafast","-crf","23","-pix_fmt","yuv420p","-movflags","+faststart",silent]
         
         logpath=os.path.join(td,"ffmpeg.log")
         start_time = time.time()
@@ -131,36 +132,47 @@ def process_video(upload,settings,progress):
             writer=subprocess.Popen(cmd,stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,stderr=log)
             count=0
             
-            # Multi-threading frame pre-fetching and processing loop
+            # Safe Chunk/Batch Processing (RAM limit lagayi gayi hai)
+            BATCH_SIZE = 8
             with ThreadPoolExecutor(max_workers=4) as executor:
-                futures = []
-                # First frame process
-                futures.append(executor.submit(process_single_frame, first_frame, den, sharp, color, bright, cont, ow, oh, mode))
-                
-                # Fetch all remaining frames immediately into thread pool
-                while True:
-                    ok, frame = cap.read()
-                    if not ok: break
-                    futures.append(executor.submit(process_single_frame, frame, den, sharp, color, bright, cont, ow, oh, mode))
-                
-                cap.release()
-                
                 try:
-                    for future in futures:
-                        proc_frame = future.result()
-                        writer.stdin.write(np.ascontiguousarray(proc_frame).tobytes())
-                        count += 1
+                    # Pehla frame likhein
+                    proc_first = process_single_frame(first_frame, den, sharp, color, bright, cont, ow, oh, mode)
+                    writer.stdin.write(np.ascontiguousarray(proc_first).tobytes())
+                    count += 1
+                    
+                    more_frames = True
+                    while more_frames:
+                        batch_frames = []
+                        for _ in range(BATCH_SIZE):
+                            ok, frame = cap.read()
+                            if not ok:
+                                more_frames = False
+                                break
+                            batch_frames.append(frame)
                         
-                        if meta["n"] > 0 and count % 2 == 0:
-                            pct = min(count / meta["n"], 0.99)
-                            elapsed = time.time() - start_time
-                            eta = (elapsed / pct) - elapsed if pct > 0 else 0
-                            progress.progress(pct, text=f"⚡ Processing: {int(pct*100)}% | Frames: {count}/{meta['n']} | Time Left: {int(eta)}s")
+                        if not batch_frames:
+                            break
+                        
+                        # Thread pool me sirf limited batch chalega
+                        futures = [executor.submit(process_single_frame, f, den, sharp, color, bright, cont, ow, oh, mode) for f in batch_frames]
+                        
+                        for future in futures:
+                            proc_frame = future.result()
+                            writer.stdin.write(np.ascontiguousarray(proc_frame).tobytes())
+                            count += 1
                             
+                            if meta["n"] > 0 and count % 2 == 0:
+                                pct = min(count / meta["n"], 0.99)
+                                elapsed = time.time() - start_time
+                                eta = (elapsed / pct) - elapsed if pct > 0 else 0
+                                progress.progress(pct, text=f"⚡ Processing: {int(pct*100)}% | Frames: {count}/{meta['n']} | Time Left: {int(eta)}s")
+                                
                 except Exception:
                     if writer.poll() is None: writer.kill(); writer.wait()
                     raise
                 finally:
+                    cap.release()
                     try:
                         if writer.stdin and not writer.stdin.closed: writer.stdin.close()
                     except Exception: pass
@@ -196,14 +208,3 @@ if media=="Image Enhancer":
         with b:
             st.subheader("Enhanced Output")
             if st.button("✨ Enhance image",type="primary"):
-                with st.spinner("Processing..."):
-                    try:
-                        out_bytes,w,h,mime,ext=process_image(upload,settings)
-                        st.image(out_bytes,use_container_width=True)
-                        st.success(f"Resolution: {w}x{h}")
-                        st.download_button(label="💾 Download Image", data=out_bytes, file_name=f"enhanced_{upload.name}", mime=mime)
-                    except Exception as e:
-                        st.error(f"Error: {e}")
-
-elif media=="Video Enhancer":
-    upload=st.file_uploader("Apna Video upload kare",type=["mp4","mov","avi","mkv"])
