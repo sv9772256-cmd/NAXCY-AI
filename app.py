@@ -25,7 +25,7 @@ def even(v):
     return v if v%2==0 else v+1
 
 def target_size(shape_tuple, res_name, ratio_name):
-    # Perfect Fix: shape_tuple (h, w, c) se elements sahi tarike se access kiye gaye hain
+    # FULLY ANALYZED FIX: shape_tuple se Height aur Width को सुरक्षित रूप से निकालना
     h = shape_tuple[0]
     w = shape_tuple[1]
     rh=RES[res_name]; ratio=RATIOS[ratio_name]
