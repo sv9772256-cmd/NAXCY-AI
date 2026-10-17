@@ -1,30 +1,21 @@
-# ✨ NAXCY AI Ultra Enhancer
+# NAXCY AI — Free Enhancement build
 
-A powerful, mobile-friendly web application built with **Streamlit**, **FFmpeg**, and **Pillow** to upscale and enhance the visual quality of your images and videos.
+## Included
+- `app.py`: Streamlit image/video enhancer with classic filters and optional EDSR x4 AI super-resolution.
+- `requirements.txt`: Python dependencies.
+- `packages.txt`: FFmpeg system package for Streamlit Community Cloud.
 
-## 🚀 Features
-- **Advanced Image Enhancement:** Uses Lanczos Resampling combined with Unsharp Masking, Contrast, and Saturation adjustments.
-- **Smart Video Upscaling:** Upscales video dimensions up to 4K using high-quality FFmpeg filters (`lanczos` scaling, `hqdn3d` denoising, and custom sharpening).
-- **Storage Optimized:** Automatically cleans up processing files to prevent server crashes.
-- **Mobile Friendly:** Fully responsive UI tailored for Android WebView wraps and mobile browsers.
+## Install in your GitHub repository
+1. Download and unzip this package.
+2. Open your `NAXCY-AI` GitHub repository.
+3. Replace the existing root `app.py` with the included `app.py`.
+4. Add or replace `requirements.txt` and `packages.txt` in the same root folder.
+5. Commit the changes. Wait for Streamlit Cloud to rebuild, then test a small image first.
 
-## 📁 Repository Structure
-- `app.py` - The core application layout and processing pipeline.
-- `requirements.txt` - Python backend dependencies.
-- `packages.txt` - Linux system-level dependencies required for FFmpeg.
-
-## 🛠️ Local Installation
-1. Clone the repository:
-   ```bash
-   git clone https://github.com
-   ```
-2. Install Python dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-3. Make sure **FFmpeg** is installed on your system's environment path.
-4. Run the app:
-   ```bash
-   streamlit run app.py
-   ```
-   
+## Important limitations
+- AI mode downloads an open-source EDSR x4 model on first use. The download needs outbound internet access and enough disk space.
+- AI video processing runs frame by frame. Free CPU hosting may be slow or run out of memory/time, especially for 2K/4K or long videos.
+- Classic mode uses standard filters; it does not reconstruct missing details like an AI model.
+- The app tries to preserve original audio when processing video. Some unusual codecs/files may still fail.
+- Test with a copy of your current project first.
+- 
